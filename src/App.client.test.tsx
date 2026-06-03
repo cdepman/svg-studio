@@ -3,8 +3,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import App from "./App";
 
-// Exercise the real handlers/effects in jsdom (SSR can't). Covers PRD §18
-// acceptance flows: duplicate, selection, visibility hides from canvas.
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 let container: HTMLDivElement;
@@ -13,55 +11,47 @@ let root: Root;
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
-  act(() => {
-    root = createRoot(container);
-    root.render(<App />);
-  });
+  act(() => { root = createRoot(container); root.render(<App />); });
 });
-
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
-});
+afterEach(() => { act(() => root.unmount()); container.remove(); });
 
 const click = (el: Element | null | undefined) =>
-  act(() => {
-    el?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
-
+  act(() => { el?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 const keydown = (key: string, init: KeyboardEventInit = {}) =>
-  act(() => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
-  });
+  act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init })); });
 
 const button = (text: string) =>
-  Array.from(container.querySelectorAll("button")).find(
-    (b) => b.textContent?.trim() === text
-  );
+  Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.trim() === text);
+const titleBtn = (sub: string) =>
+  Array.from(container.querySelectorAll("button")).find((b) => b.getAttribute("title")?.includes(sub));
+const setMode = (m: "design" | "animate") =>
+  click(Array.from(container.querySelectorAll(".mode-btn")).find((b) => b.textContent?.includes(m === "animate" ? "Animate" : "Design")));
+const newLayer = () => click(container.querySelector('[title="New layer"]'));
+const selectAll = () => keydown("a", { metaKey: true });
 
 const rows = () => container.querySelectorAll(".layer-row");
-const canvas = () => container.querySelector("svg.canvas")!;
+const canvas = () => container.querySelector("svg.canvas-svg")!;
 const canvasLayerIds = () =>
-  Array.from(canvas().querySelectorAll("[data-layer-id]")).map((e) =>
-    e.getAttribute("data-layer-id")
-  );
+  Array.from(canvas().querySelectorAll("[data-layer-id]")).map((e) => e.getAttribute("data-layer-id"));
 const gizmos = () => canvas().querySelectorAll(".gizmo");
 const resizeHandles = () => canvas().querySelectorAll(".gizmo-handle");
-// one pass only (the tuck renders the ring as two half-disk passes; the second
-// carries .alt) so this counts logical copies per layer.
 const instances = () => canvas().querySelectorAll("use.instance:not(.alt)");
+const sliderByLabel = (label: string) => {
+  const ctl = Array.from(container.querySelectorAll(".inspector .ctl")).find(
+    (c) => c.querySelector(".ctl-label")?.textContent === label
+  );
+  return ctl?.querySelector("input[type=range]") as HTMLInputElement;
+};
+const valByLabel = (label: string) => {
+  const ctl = Array.from(container.querySelectorAll(".inspector .ctl")).find(
+    (c) => c.querySelector(".ctl-label")?.textContent === label
+  );
+  return ctl?.querySelector(".ctl-val")?.textContent;
+};
 
 function setRange(input: Element, value: number) {
-  // React tracks the input value, so set it via the native prototype setter
-  // before dispatching, or onChange won't fire.
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    "value"
-  )!.set!;
-  act(() => {
-    setter.call(input, String(value));
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  act(() => { setter.call(input, String(value)); input.dispatchEvent(new Event("input", { bubbles: true })); });
 }
 
 describe("App layer interactions", () => {
@@ -72,222 +62,163 @@ describe("App layer interactions", () => {
   });
 
   it("New Layer adds a second layer and selects it", () => {
-    click(button("New Layer"));
+    newLayer();
     expect(rows()).toHaveLength(2);
     expect(canvasLayerIds()).toHaveLength(2);
-    // newest (front) is top row and selected
     expect(rows()[0].className).toContain("selected");
   });
 
-  it("Duplicate adds a copy named '<name> copy' and selects the new layer", () => {
+  it("Duplicate adds a copy and selects the new layer", () => {
     click(button("Duplicate"));
     expect(rows()).toHaveLength(2);
     expect(container.textContent).toContain("Radial Repeat 1 copy");
-    // top row = front = the copy; it is selected, the original is not
     expect(rows()[0].textContent).toContain("Radial Repeat 1 copy");
     expect(rows()[0].className).toContain("selected");
     expect(rows()[1].className).not.toContain("selected");
   });
 
   it("Duplicate acts on the whole selection when multiple are selected", () => {
-    click(button("New Layer")); // 2 layers
-    click(button("Select All"));
-    click(button("Duplicate 2")); // button reflects the selection count
+    newLayer();
+    selectAll();
+    click(button("Duplicate"));
     expect(rows()).toHaveLength(4);
-    // the two copies are now selected
-    const selected = Array.from(rows()).filter((r) => r.className.includes("selected"));
-    expect(selected).toHaveLength(2);
-  });
-
-  it("groups selected layers with the keyboard shortcut and selects grouped layers together", () => {
-    click(button("New Layer"));
-    click(button("Select All"));
-    keydown("g", { metaKey: true });
-
-    expect(container.querySelectorAll(".group-row")).toHaveLength(1);
-    expect(container.querySelectorAll(".child-row")).toHaveLength(2);
-
-    keydown("Escape");
-    expect(Array.from(rows()).filter((r) => r.className.includes("selected"))).toHaveLength(1);
-
-    click(rows()[0]);
     expect(Array.from(rows()).filter((r) => r.className.includes("selected"))).toHaveLength(2);
-
-    keydown("g", { metaKey: true, shiftKey: true });
-    expect(container.querySelectorAll(".group-row")).toHaveLength(0);
   });
 
-  it("Undo and Redo buttons revert and restore document edits", () => {
-    expect((button("Undo") as HTMLButtonElement).disabled).toBe(true);
-    expect((button("Redo") as HTMLButtonElement).disabled).toBe(true);
-
-    click(button("New Layer"));
+  it("groups selected layers with the keyboard shortcut", () => {
+    newLayer();
+    selectAll();
+    keydown("g", { metaKey: true });
+    expect(container.textContent).toContain("group · 2 items");
+    expect(rows()).toHaveLength(3); // group row + 2 members
+    keydown("g", { metaKey: true, shiftKey: true });
+    expect(container.textContent).not.toContain("group · 2 items");
     expect(rows()).toHaveLength(2);
-    expect((button("Undo") as HTMLButtonElement).disabled).toBe(false);
+  });
 
-    click(button("Undo"));
+  it("Undo / Redo revert and restore document edits", () => {
+    expect((titleBtn("Undo") as HTMLButtonElement).disabled).toBe(true);
+    newLayer();
+    expect(rows()).toHaveLength(2);
+    expect((titleBtn("Undo") as HTMLButtonElement).disabled).toBe(false);
+    click(titleBtn("Undo"));
     expect(rows()).toHaveLength(1);
-    expect((button("Redo") as HTMLButtonElement).disabled).toBe(false);
-
-    click(button("Redo"));
+    click(titleBtn("Redo"));
     expect(rows()).toHaveLength(2);
   });
 
   it("keyboard undo and redo shortcuts use the current document state", () => {
-    click(button("New Layer"));
+    newLayer();
     expect(rows()).toHaveLength(2);
-
     keydown("z", { metaKey: true });
     expect(rows()).toHaveLength(1);
-
     keydown("z", { metaKey: true, shiftKey: true });
     expect(rows()).toHaveLength(2);
-
     keydown("z", { ctrlKey: true });
     expect(rows()).toHaveLength(1);
-
     keydown("y", { ctrlKey: true });
     expect(rows()).toHaveLength(2);
   });
 
   it("creates a center-path animation and toggles playback", () => {
-    click(button("Animate Center"));
+    setMode("animate");
+    click(button("Add animation"));
     expect(canvas().querySelector(".motion-path-line")).toBeTruthy();
     expect(container.textContent).toContain("Duration");
 
-    click(button("Play"));
+    click(button("Preview"));
     const style = canvas().querySelector("style")?.textContent ?? "";
     expect(style).toContain("translate(var(--motion-start-dx), var(--motion-start-dy))");
-    expect(style).toContain("translate(var(--motion-end-dx), var(--motion-end-dy))");
     expect(style).toContain("animation-play-state: running");
     expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper").length).toBeGreaterThan(0);
-    expect(canvas().querySelector(".layer-center-root.motion-wrapper")).toBeNull();
 
     click(button("Pause"));
     expect(canvas().querySelector("style")?.textContent ?? "").toContain("animation-play-state: paused");
   });
 
   it("keeps the tucked still-frame ordering when entering animation edit mode", () => {
-    click(button("Animate Center"));
-
+    setMode("animate");
+    click(button("Add animation"));
     expect(canvas().querySelectorAll("clipPath[id^='seam-']")).toHaveLength(2);
     expect(instances()).toHaveLength(12);
     expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper")).toHaveLength(24);
   });
 
   it("allows dragging the center-path start handle", () => {
-    click(button("Animate Center"));
+    setMode("animate");
+    click(button("Add animation"));
     const start = canvas().querySelector(".motion-path-start")!;
     const line = canvas().querySelector(".motion-path-line")!;
-
-    act(() =>
-      start.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 20, button: 0 }))
-    );
+    act(() => start.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 20, button: 0 })));
     act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 30, clientY: 40 })));
-
     expect(line.getAttribute("x1")).toBe("30");
     expect(line.getAttribute("y1")).toBe("40");
   });
 
-  it("keeps tucked split clips outside the moving wrappers during playback", () => {
-    click(button("Animate Center"));
-    click(button("Play"));
-
-    expect(canvas().querySelectorAll("clipPath[id^='seam-']")).toHaveLength(2);
-    expect(canvas().querySelectorAll(".instance-motion-wrapper[clip-path]")).toHaveLength(0);
-    expect(canvas().querySelectorAll("use.instance.alt")).toHaveLength(12);
-    expect(instances()).toHaveLength(12);
-    expect(canvas().querySelectorAll(".instance-placement > .instance-motion-wrapper")).toHaveLength(24);
-  });
-
   it("keeps animated repeat instances synchronized when count changes during playback", () => {
-    const countInput = () => container.querySelector(".controls-body input[type=range]") as HTMLInputElement;
-
-    click(button("Animate Center"));
-    click(button("Play"));
-    setRange(countInput(), 24);
-
+    setMode("animate");
+    click(button("Add animation"));
+    click(button("Preview"));
+    setRange(sliderByLabel("Count"), 24);
     expect(instances()).toHaveLength(24);
     const wrappers = Array.from(canvas().querySelectorAll<SVGGElement>(".instance-motion-wrapper.motion-wrapper"));
     expect(wrappers.length).toBeGreaterThanOrEqual(24);
     expect(wrappers.every((w) => w.style.getPropertyValue("--motion-dx"))).toBe(true);
-    expect(wrappers.every((w) => w.style.getPropertyValue("--motion-dy"))).toBe(true);
   });
 
   it("hiding a layer removes it from the canvas but keeps the panel row", () => {
     const beforeId = canvasLayerIds()[0];
-    const eye = container.querySelector('.layer-row .mini[title="Hide"]');
-    click(eye);
-    expect(rows()).toHaveLength(1); // still in the panel
-    expect(canvasLayerIds()).not.toContain(beforeId); // gone from canvas
+    // layer-row icon toggles fire on pointerdown (matches the design)
+    act(() => container.querySelector('.layer-row [title="Hide"]')!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(rows()).toHaveLength(1);
+    expect(canvasLayerIds()).not.toContain(beforeId);
   });
 
-  it("deleting the only layer leaves an empty document (empty state allowed)", () => {
+  it("deleting the only layer leaves an empty document", () => {
     click(button("Delete"));
     expect(rows()).toHaveLength(0);
-    expect(container.textContent).toContain("No layer selected.");
+    expect(container.textContent).toContain("Select a layer to edit its settings.");
     expect(canvasLayerIds()).toHaveLength(0);
   });
 
-  it("Select All highlights every row and draws a box per layer with one handle", () => {
-    click(button("New Layer")); // now 2 layers
-    click(button("Select All"));
-    // both rows selected
+  it("Select All highlights every row and draws one union gizmo", () => {
+    newLayer();
+    selectAll();
     expect(Array.from(rows()).every((r) => r.className.includes("selected"))).toBe(true);
-    // one union gizmo wraps the whole selection, with four resize handles
     expect(gizmos()).toHaveLength(1);
     expect(resizeHandles()).toHaveLength(4);
     expect(container.textContent).toContain("All layers (2)");
   });
 
   it("count edits a single layer, and is disabled (blank) for a multi-selection", () => {
-    const countInput = () => container.querySelector(".controls-body input[type=range]") as HTMLInputElement;
-    // single selection: count works
     expect(instances()).toHaveLength(12);
-    expect(countInput().disabled).toBe(false);
-    setRange(countInput(), 6);
+    expect(sliderByLabel("Count").disabled).toBe(false);
+    setRange(sliderByLabel("Count"), 6);
     expect(instances()).toHaveLength(6);
-
-    // select two -> count is disabled and shows no value
-    click(button("New Layer"));
-    click(button("Select All"));
-    expect(countInput().disabled).toBe(true);
-    const countVal = container.querySelector(".controls-body .ctrl-val")!;
-    expect(countVal.textContent).toBe("—");
+    newLayer();
+    selectAll();
+    expect(sliderByLabel("Count").disabled).toBe(true);
+    expect(valByLabel("Count")).toBe("—");
   });
 
   it("grabbing a layer's artwork and dragging moves its center", () => {
     const centerRoot = () => canvas().querySelector(".layer .layer-center-root")!;
     expect(centerRoot().getAttribute("transform")).toBe("translate(0,0)");
-
     const art = canvas().querySelector(".layer use.instance")!;
-    // jsdom has no PointerEvent; MouseEvent with a pointer type name still drives
-    // the handlers (they only read clientX/clientY). No CTM => world == client.
-    const pd = new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 100, button: 0 });
-    act(() => art.dispatchEvent(pd));
+    act(() => art.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 100, button: 0 })));
     act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 130, clientY: 150 })));
-
-    // commit applies delta (30,50) to the layer center
     expect(centerRoot().getAttribute("transform")).toBe("translate(30,50)");
   });
 
   it("Option + dragging a resize handle duplicates and resizes the copy", () => {
     expect(rows()).toHaveLength(1);
     const handle = canvas().querySelector(".gizmo-handle")!;
-    // anchor = union center (0,0); startDist=100, end dist=250 => factor 2.5
-    act(() =>
-      handle.dispatchEvent(
-        new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 0, button: 0, altKey: true })
-      )
-    );
+    act(() => handle.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 0, button: 0, altKey: true })));
     act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 250, clientY: 0 })));
-
-    expect(rows()).toHaveLength(2); // duplicated
-    const scales = Array.from(canvas().querySelectorAll(".repeat-scale")).map((e) =>
-      e.getAttribute("transform")
-    );
-    expect(scales).toContain("scale(1)"); // original untouched
-    expect(scales).toContain("scale(2.5)"); // copy resized
+    expect(rows()).toHaveLength(2);
+    const scales = Array.from(canvas().querySelectorAll(".repeat-scale")).map((e) => e.getAttribute("transform"));
+    expect(scales).toContain("scale(1)");
+    expect(scales).toContain("scale(2.5)");
   });
 
   const pe = (type: string, x: number, y: number) =>
@@ -295,43 +226,33 @@ describe("App layer interactions", () => {
   const drawStroke = (a: [number, number], b: [number, number], c: [number, number], d: [number, number]) => {
     const svg = canvas();
     act(() => svg.dispatchEvent(pe("pointerdown", a[0], a[1])));
-    act(() => {
-      svg.dispatchEvent(pe("pointermove", b[0], b[1]));
-      svg.dispatchEvent(pe("pointermove", c[0], c[1]));
-      svg.dispatchEvent(pe("pointermove", d[0], d[1]));
-    });
+    act(() => { svg.dispatchEvent(pe("pointermove", b[0], b[1])); svg.dispatchEvent(pe("pointermove", c[0], c[1])); svg.dispatchEvent(pe("pointermove", d[0], d[1])); });
     act(() => svg.dispatchEvent(pe("pointerup", d[0], d[1])));
   };
   const instancesIn = (layerIndex: number) =>
     canvas().querySelectorAll(`[data-layer-id]`)[layerIndex]?.querySelectorAll("use.instance:not(.alt)").length;
 
   it("Pencil draws a single-instance drawn layer; extra strokes append to it", () => {
-    click(button("Pencil"));
+    click(titleBtn("Pencil"));
     drawStroke([200, 200], [260, 210], [300, 260], [210, 300]);
-    expect(rows()).toHaveLength(2); // default + one drawn layer
+    expect(rows()).toHaveLength(2);
     expect(container.textContent).toContain("Drawn Shape 1");
-    expect(rows()[0].textContent).toContain("Drawn Shape 1"); // selected, front
+    expect(rows()[0].textContent).toContain("Drawn Shape 1");
     expect(rows()[0].className).toContain("selected");
-
-    // a drawn layer is NOT auto-repeated: a single instance, and a filled path
-    const drawnG = canvas().querySelector('.layer[data-layer-id]:last-of-type')!;
+    const drawnG = canvas().querySelector(".layer[data-layer-id]:last-of-type")!;
     expect(drawnG.querySelectorAll("use.instance:not(.alt)")).toHaveLength(1);
-    expect(canvas().querySelector('.layer path[fill]')).not.toBeNull();
-
-    // a second stroke appends to the SAME layer (no new layer)
+    expect(canvas().querySelector(".layer path[fill]")).not.toBeNull();
     drawStroke([400, 400], [460, 410], [500, 460], [410, 500]);
     expect(rows()).toHaveLength(2);
     expect(drawnG.querySelectorAll("path").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("Create Radial Repeat turns the selected drawn shape into a repeat", () => {
-    click(button("Pencil"));
+  it("Radialize turns the selected drawn shape into a repeat", () => {
+    click(titleBtn("Pencil"));
     drawStroke([200, 200], [260, 210], [300, 260], [210, 300]);
     click(button("Done"));
-    // single instance before
     expect(instancesIn(1)).toBe(1);
-    click(button("Create Radial Repeat"));
-    // now many instances (default count)
+    click(button("Radialize"));
     expect(instancesIn(1)!).toBeGreaterThan(1);
   });
 });

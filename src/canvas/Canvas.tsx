@@ -328,7 +328,7 @@ export function Canvas({
   return (
     <svg
       ref={scene.svgRef}
-      className={tool === "pencil" ? "canvas pencil" : "canvas"}
+      className="canvas-svg"
       onWheel={onWheel}
       onPointerDown={onSvgPointerDown}
       onPointerMove={onSvgPointerMove}

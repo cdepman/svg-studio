@@ -7,7 +7,8 @@ import App from "./App";
 describe("App", () => {
   it("renders the panel, canvas, default layer instances, and the gizmo", () => {
     const html = renderToString(<App />);
-    expect(html).toContain('class="canvas"');
+    expect(html).toContain('class="canvas-svg"');
+    expect(html).toContain("mode-switch");
     expect(html).toContain("Layers");
     expect(html).toContain("Radial Repeat 1");
     // default layer selected -> gizmo shown
@@ -15,7 +16,7 @@ describe("App", () => {
     // default count 12 -> 12 instances, motif def is per-layer
     expect((html.match(/class="instance"/g) ?? []).length).toBe(12);
     expect(html).toContain('id="motif-');
-    // controls show the selected layer name
-    expect(html).toContain("Editing");
+    // inspector mode pill
+    expect(html).toContain("insp-mode-pill");
   });
 });

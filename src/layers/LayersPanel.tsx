@@ -1,7 +1,9 @@
-// Flat layers panel. Renders the layer array REVERSED so the top row is the
-// visual front (array end). Groups are editor-level sets, shown as compact
-// badges without changing the flat render order.
+// Flat layers panel (design re-skin). Renders the layer array REVERSED so the
+// top row is the visual front. Groups are editor-level sets shown as folder
+// rows with their members indented. Thumbnails preview each layer's repeat.
 import { useRef, useState } from "react";
+import { Icon } from "../ui/icons";
+import { boundsReach, instanceOpacity, instanceTransform, paintOrder } from "../canvas/repeatMath";
 import type { Layer, LayerGroup } from "../types";
 
 export type MoveDir = "front" | "forward" | "backward" | "back";
@@ -10,7 +12,6 @@ interface LayersPanelProps {
   layers: Layer[];
   groups: LayerGroup[];
   selectedIds: Set<string>;
-  /** Toggles are disabled mid-drag so visibility can't change during a gesture. PRD §17. */
   dragging: boolean;
   onSelect: (id: string, additive?: boolean) => void;
   onGroupSelection: () => void;
@@ -26,6 +27,32 @@ interface LayersPanelProps {
   onMove: (id: string, dir: MoveDir) => void;
   onReorder: (draggedId: string, targetId: string) => void;
   onNewLayer: () => void;
+}
+
+function LayerThumb({ layer }: { layer: Layer }) {
+  const p = layer.params;
+  const r = boundsReach(p, layer.motif.box) * layer.scale + 6;
+  const id = `th-${layer.id}`;
+  // Render the FULL ring so the preview is contiguous (no arc/gap at high counts).
+  const indices = paintOrder(p.count, p.paintOffset);
+  return (
+    <div className="lr-thumb">
+      <svg viewBox={`${-r} ${-r} ${2 * r} ${2 * r}`}>
+        <defs>
+          <g
+            id={id}
+            transform={`translate(${-layer.motif.anchorX},${-layer.motif.anchorY})`}
+            dangerouslySetInnerHTML={{ __html: layer.motif.innerHtml }}
+          />
+        </defs>
+        <g transform={`scale(${layer.scale})`}>
+          {indices.map((i) => (
+            <use key={i} href={`#${id}`} transform={instanceTransform(p, i)} opacity={instanceOpacity(p, i)} />
+          ))}
+        </g>
+      </svg>
+    </div>
+  );
 }
 
 export function LayersPanel({
@@ -50,15 +77,17 @@ export function LayersPanel({
 }: LayersPanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const draggedId = useRef<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
 
-  // Top row = front = end of the internal array.
+  const q = query.trim().toLowerCase();
   const display = layers.slice().reverse();
   const groupByLayer = new Map<string, LayerGroup>();
   groups.forEach((g) => g.layerIds.forEach((id) => groupByLayer.set(id, g)));
   const layerById = new Map(layers.map((l) => [l.id, l]));
   const emittedGroups = new Set<string>();
-  const groupedDisplay = display.flatMap((layer) => {
+  const rows = display.flatMap((layer) => {
     const group = groupByLayer.get(layer.id);
     if (!group) return [{ kind: "layer" as const, layer, depth: 0 }];
     if (emittedGroups.has(group.id)) return [];
@@ -73,168 +102,149 @@ export function LayersPanel({
       ...members.map((member) => ({ kind: "layer" as const, layer: member, depth: 1 })),
     ];
   });
+  const visibleRows = rows.filter((entry) =>
+    !q ? true : (entry.kind === "group" ? entry.group.name : entry.layer.name).toLowerCase().includes(q)
+  );
 
   return (
-    <div className="layers-panel">
-      <div className="layers-head">
-        <span className="layers-title">Layers</span>
-        <div className="layers-head-actions">
-          <button className="mini" onClick={onGroupSelection} disabled={!canGroupSelection} title="Group selected layers (⌘G)">
-            Group
-          </button>
-          <button className="mini" onClick={onUngroupSelection} disabled={!canUngroupSelection} title="Ungroup selected layers (⌘⇧G)">
-            Ungroup
-          </button>
-          <button className="mini" onClick={onNewLayer} title="New layer">
-            + New
-          </button>
-        </div>
+    <aside className="layers-panel">
+      <div className="panel-head">
+        <span className="panel-title">Layers</span>
+        <div className="panel-head-spacer" />
+        <button className="iconbtn" onClick={onGroupSelection} disabled={!canGroupSelection} title="Group selection (⌘G)">
+          {Icon.group({ size: 15 })}
+        </button>
+        <button className="iconbtn" onClick={onUngroupSelection} disabled={!canUngroupSelection} title="Ungroup (⌘⇧G)">
+          {Icon.ungroup({ size: 15 })}
+        </button>
+        <button className="iconbtn" onClick={onNewLayer} title="New layer">
+          {Icon.add({ size: 17 })}
+        </button>
       </div>
 
-      {display.length === 0 && (
-        <div className="layers-empty">
-          No layers.
-          <button className="mini" onClick={onNewLayer}>
-            + New Layer
-          </button>
-        </div>
-      )}
+      <div className="layer-search">
+        {Icon.search()}
+        <input placeholder="Search layers" value={query} onChange={(e) => setQuery(e.target.value)} />
+      </div>
 
-      <ul className="layers-list">
-        {groupedDisplay.map((entry) => {
+      <div className="layer-list scroll">
+        {visibleRows.map((entry) => {
           if (entry.kind === "group") {
             const selected = entry.group.layerIds.every((id) => selectedIds.has(id));
             return (
-              <li
+              <div
                 key={entry.group.id}
-                className={`group-row${selected ? " selected" : ""}`}
-                onClick={(e) => onSelect(entry.group.layerIds[0], e.shiftKey || e.metaKey)}
+                className={`layer-row${selected ? " is-selected" : ""}`}
+                onPointerDown={() => onSelect(entry.group.layerIds[0])}
               >
-                <span className="group-disclosure">▾</span>
-                <span className="group-icon">G</span>
-                <span className="layer-name" title={entry.group.name}>
-                  {entry.group.name}
-                </span>
-                <span className="group-count">{entry.members.length}</span>
-                <button
-                  className="mini"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onUngroupGroup(entry.group.id);
-                  }}
-                  title="Ungroup"
-                >
-                  Ungroup
-                </button>
-              </li>
+                <span className="lr-grip" />
+                <span className="lr-disclosure">{Icon.chevron()}</span>
+                <div className="lr-thumb group">{Icon.folder({ size: 15 })}</div>
+                <div className="lr-body">
+                  <span className="lr-name">{entry.group.name}</span>
+                  <span className="lr-meta">group · {entry.members.length} item{entry.members.length === 1 ? "" : "s"}</span>
+                </div>
+                <div className="lr-actions">
+                  <button className="lr-ico" title="Ungroup" onPointerDown={(e) => { e.stopPropagation(); onUngroupGroup(entry.group.id); }}>
+                    {Icon.ungroup({ size: 15 })}
+                  </button>
+                </div>
+              </div>
             );
           }
 
           const l = entry.layer;
           const selected = selectedIds.has(l.id);
-          const group = groupByLayer.get(l.id);
+          const anim = l.animation?.enabled;
           return (
-            <li
-              key={l.id}
-              className={`layer-row${entry.depth ? " child-row" : ""}${selected ? " selected" : ""}`}
-              draggable
-              onDragStart={(e) => {
-                draggedId.current = l.id;
-                e.dataTransfer.effectAllowed = "move";
-              }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (draggedId.current) onReorder(draggedId.current, l.id);
-                draggedId.current = null;
-              }}
-              onClick={(e) => onSelect(l.id, e.shiftKey || e.metaKey)}
-            >
-              <span className="drag-handle" title="Drag to reorder">
-                ⠿
-              </span>
-              <button
-                className="mini"
-                disabled={dragging}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleVisible(l.id);
+            <div key={l.id} style={{ position: "relative" }}>
+              <div
+                className={`layer-row${selected ? " is-selected" : ""}${overId === l.id ? " is-drop-target" : ""}`}
+                style={{ paddingLeft: 4 + entry.depth * 16 }}
+                draggable
+                onPointerDown={(e) => onSelect(l.id, e.shiftKey || e.metaKey)}
+                onDragStart={(e) => {
+                  draggedId.current = l.id;
+                  e.dataTransfer.effectAllowed = "move";
                 }}
-                title={l.visible ? "Hide" : "Show"}
-              >
-                {l.visible ? "👁" : "🙈"}
-              </button>
-              <button
-                className="mini"
-                disabled={dragging}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleLocked(l.id);
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (l.id !== draggedId.current) setOverId(l.id);
                 }}
-                title={l.locked ? "Unlock" : "Lock"}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggedId.current && draggedId.current !== l.id) onReorder(draggedId.current, l.id);
+                  draggedId.current = null;
+                  setOverId(null);
+                }}
+                onDragEnd={() => { draggedId.current = null; setOverId(null); }}
               >
-                {l.locked ? "🔒" : "🔓"}
-              </button>
-
-              {editingId === l.id ? (
-                <input
-                  className="layer-name-input"
-                  autoFocus
-                  defaultValue={l.name}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={(e) => {
-                    onRename(l.id, e.target.value.trim() || l.name);
-                    setEditingId(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                    if (e.key === "Escape") setEditingId(null);
-                  }}
-                />
-              ) : (
-                <span
-                  className="layer-name"
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    setEditingId(l.id);
-                  }}
-                >
-                  {l.name}
-                </span>
-              )}
-              {group && entry.depth === 0 && (
-                <span className="layer-group-badge" title={group.name}>
-                  G
-                </span>
-              )}
-
-              <div className="layer-menu-wrap">
-                <button
-                  className="mini"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuId(menuId === l.id ? null : l.id);
-                  }}
-                  title="More"
-                >
-                  ⋮
-                </button>
-                {menuId === l.id && (
-                  <div className="layer-menu" onClick={(e) => e.stopPropagation()}>
-                    <button onClick={() => { setEditingId(l.id); setMenuId(null); }}>Rename</button>
-                    <button onClick={() => { onDuplicate(l.id); setMenuId(null); }}>Duplicate</button>
-                    <button onClick={() => { onMove(l.id, "front"); setMenuId(null); }}>Move to Front</button>
-                    <button onClick={() => { onMove(l.id, "forward"); setMenuId(null); }}>Move Forward</button>
-                    <button onClick={() => { onMove(l.id, "backward"); setMenuId(null); }}>Move Backward</button>
-                    <button onClick={() => { onMove(l.id, "back"); setMenuId(null); }}>Move to Back</button>
-                    <button className="danger" onClick={() => { onDelete(l.id); setMenuId(null); }}>Delete</button>
-                  </div>
-                )}
+                <span className="lr-grip">{Icon.grip()}</span>
+                <span className="lr-disclosure" />
+                <LayerThumb layer={l} />
+                <div className="lr-body">
+                  {editingId === l.id ? (
+                    <span className="lr-name">
+                      <input
+                        autoFocus
+                        defaultValue={l.name}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onBlur={(e) => { onRename(l.id, e.target.value.trim() || l.name); setEditingId(null); }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                      />
+                    </span>
+                  ) : (
+                    <span className="lr-name" onDoubleClick={(e) => { e.stopPropagation(); setEditingId(l.id); }}>
+                      {l.name}
+                    </span>
+                  )}
+                  <span className="lr-meta">{l.params.count}×{anim ? " · anim" : ""}</span>
+                </div>
+                <div className="lr-actions">
+                  <button
+                    className={`lr-ico is-quiet${l.locked ? " lock-on" : ""}`}
+                    disabled={dragging}
+                    onPointerDown={(e) => { e.stopPropagation(); onToggleLocked(l.id); }}
+                    title={l.locked ? "Unlock" : "Lock"}
+                  >
+                    {l.locked ? Icon.lock() : Icon.unlock()}
+                  </button>
+                  <button
+                    className={`lr-ico${l.visible ? " on" : " is-quiet"}`}
+                    disabled={dragging}
+                    onPointerDown={(e) => { e.stopPropagation(); onToggleVisible(l.id); }}
+                    title={l.visible ? "Hide" : "Show"}
+                  >
+                    {l.visible ? Icon.eye() : Icon.eyeOff()}
+                  </button>
+                  <button className="lr-ico is-quiet" onPointerDown={(e) => { e.stopPropagation(); setMenuId(menuId === l.id ? null : l.id); }} title="More">
+                    {Icon.dots()}
+                  </button>
+                </div>
               </div>
-            </li>
+              {menuId === l.id && (
+                <div style={{ position: "absolute", right: 8, top: 36, zIndex: 50 }}>
+                  <div className="menu right" onClick={(e) => e.stopPropagation()}>
+                    <button className="menu-item" onPointerDown={() => { setEditingId(l.id); setMenuId(null); }}>{Icon.pen({ size: 15 })}<span>Rename</span></button>
+                    <button className="menu-item" onPointerDown={() => { onDuplicate(l.id); setMenuId(null); }}>{Icon.duplicate({ size: 15 })}<span>Duplicate</span></button>
+                    <div className="menu-sep" />
+                    <button className="menu-item" onPointerDown={() => { onMove(l.id, "front"); setMenuId(null); }}><span>Move to Front</span></button>
+                    <button className="menu-item" onPointerDown={() => { onMove(l.id, "forward"); setMenuId(null); }}><span>Move Forward</span></button>
+                    <button className="menu-item" onPointerDown={() => { onMove(l.id, "backward"); setMenuId(null); }}><span>Move Backward</span></button>
+                    <button className="menu-item" onPointerDown={() => { onMove(l.id, "back"); setMenuId(null); }}><span>Move to Back</span></button>
+                    <div className="menu-sep" />
+                    <button className="menu-item" onPointerDown={() => { onDelete(l.id); setMenuId(null); }}>{Icon.trash({ size: 15 })}<span>Delete</span></button>
+                  </div>
+                </div>
+              )}
+            </div>
           );
         })}
-      </ul>
-    </div>
+        {visibleRows.length === 0 && <div className="empty-note">{q ? `No layers match “${query}”.` : "No layers."}</div>}
+      </div>
+    </aside>
   );
 }

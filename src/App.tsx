@@ -11,6 +11,8 @@ import { useViewport } from "./canvas/useViewport";
 import { layerReach, unionBounds } from "./canvas/selectionBounds";
 import { Controls } from "./controls/Controls";
 import { LayersPanel, type MoveDir } from "./layers/LayersPanel";
+import { Icon } from "./ui/icons";
+import { Timeline } from "./ui/Timeline";
 import { DEFAULT_MOTIF_SVG } from "./defaultMotif";
 import { importSvgFromFile, importSvgFromText } from "./motif/importSvg";
 import { boxCenter, DEFAULT_PENCIL, strokeToFilledPath, unionBox, type PencilSettings } from "./motif/drawnPath";
@@ -135,6 +137,10 @@ export default function App() {
   const [animationPlaying, setAnimationPlaying] = useState(false);
   const [tool, setTool] = useState<"select" | "pencil">("select");
   const [pencil, setPencil] = useState<PencilSettings>(DEFAULT_PENCIL);
+  const [mode, setMode] = useState<"design" | "animate">("design");
+  const [openMenu, setOpenMenu] = useState<"file" | "export" | null>(null);
+  const [loop, setLoop] = useState(true);
+  const [playTime, setPlayTime] = useState(0);
   const newLayerCount = useRef(1);
   const drawnCount = useRef(0);
   // The drawn layer that pencil strokes currently append to (multi-stroke shape).
@@ -787,73 +793,130 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const visibleCount = useMemo(() => layers.filter((l) => l.visible).length, [layers]);
   const editableForControls = editableSelected.length > 0;
 
-  return (
-    <div className="app">
-      <div className="topbar">
-        <strong className="brand">Radial Repeat Studio</strong>
-        <button onClick={() => fileInputRef.current?.click()}>Load SVG</button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".svg,image/svg+xml"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) loadFile(f);
-            e.target.value = "";
-          }}
-        />
-        <button onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">
-          Undo
-        </button>
-        <button onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">
-          Redo
-        </button>
-        <button
-          className={drawingMotionPath ? "active" : ""}
-          onClick={beginAnimateCenter}
-          disabled={!animationEditable}
-        >
-          Animate Center
-        </button>
-        <button
-          className={tool === "pencil" ? "active" : ""}
-          onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")}
-          title="Pencil — draw a filled shape (Esc to exit)"
-        >
-          Pencil
-        </button>
-        <button onClick={radializePrimary} disabled={!canRadialize} title="Turn the selected shape into a radial repeat">
-          Create Radial Repeat
-        </button>
-        <button onClick={onNewLayer}>New Layer</button>
-        <button
-          className={allSelected ? "active" : ""}
-          onClick={() => (allSelected ? collapseToPrimary() : selectAll())}
-          disabled={layers.length === 0}
-        >
-          {allSelected ? "Selected: All" : "Select All"}
-        </button>
-        <button onClick={onDuplicateSelected} disabled={selectedIds.length === 0}>
-          {selectedIds.length > 1 ? `Duplicate ${selectedIds.length}` : "Duplicate"}
-        </button>
-        <button onClick={onDeleteSelected} disabled={selectedIds.length === 0}>
-          Delete
-        </button>
-        <button onClick={resetCenter} disabled={!editableForControls}>
-          Reset center
-        </button>
-        <button onClick={onExport}>Export SVG</button>
-        <button onClick={() => downloadSvg(buildAnimatedExportSvg(layers), "radial-repeat-animated.svg")}>
-          Export Animated SVG
-        </button>
-        {notice && <span className="notice">{notice}</span>}
-      </div>
+  // --- Timeline clock (visual; playback itself is CSS-driven) ---
+  const animTotal = useMemo(() => {
+    const t = layers
+      .filter((l) => l.animation?.enabled)
+      .map((l) => l.animation!.delaySeconds + l.animation!.durationSeconds);
+    return t.length ? Math.max(...t) : 4;
+  }, [layers]);
 
-      <div className="stage">
+  useEffect(() => {
+    if (!animationPlaying) return;
+    let raf = 0;
+    let start = performance.now() - playTime * 1000;
+    const tick = (now: number) => {
+      let t = (now - start) / 1000;
+      if (t >= animTotal) {
+        if (loop) { start = now; t = 0; } else { t = animTotal; }
+      }
+      setPlayTime(t);
+      if (t < animTotal || loop) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animationPlaying, animTotal, loop]);
+
+  function zoomBy(factor: number) {
+    const svg = scene.svgRef.current;
+    if (!svg) return;
+    const r = svg.getBoundingClientRect();
+    const cx = r.width / 2;
+    const cy = r.height / 2;
+    setViewport((v) => {
+      const s = Math.max(0.1, Math.min(8, v.s * factor));
+      const wx = (cx - v.tx) / v.s;
+      const wy = (cy - v.ty) / v.s;
+      return { s, tx: cx - wx * s, ty: cy - wy * s };
+    });
+  }
+
+  const fileItems = [
+    { label: "Import SVG…", icon: Icon.upload, onClick: () => fileInputRef.current?.click() },
+    { label: "New layer", icon: Icon.add, onClick: onNewLayer },
+    { sep: true as const },
+    { label: "Export SVG", icon: Icon.download, onClick: onExport },
+    { label: "Export animated SVG", icon: Icon.sparkle, onClick: () => downloadSvg(buildAnimatedExportSvg(layers), "radial-repeat-animated.svg") },
+  ];
+  const exportItems = [
+    { label: "Expanded SVG", icon: Icon.download, onClick: onExport },
+    { label: "Animated SVG", icon: Icon.sparkle, onClick: () => downloadSvg(buildAnimatedExportSvg(layers), "radial-repeat-animated.svg") },
+  ];
+
+  return (
+    <div className="app" data-mode={mode}>
+      <header className="topbar">
+        <div className="tb-left">
+          <div className="brand">
+            <span className="brand-mark" />
+            <span className="brand-name">Radial Repeat<span className="brand-dim"> Studio</span></span>
+          </div>
+          <div className="tb-divider" />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".svg,image/svg+xml"
+            hidden
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) loadFile(f); e.target.value = ""; }}
+          />
+          <div className="menu-wrap">
+            <button className="btn btn-ghost" onClick={() => setOpenMenu(openMenu === "file" ? null : "file")}>
+              {Icon.file({ size: 15 })} File {Icon.chevron({ size: 13, style: { opacity: 0.6 } })}
+            </button>
+            {openMenu === "file" && (
+              <>
+                <div className="scrim" onPointerDown={() => setOpenMenu(null)} />
+                <div className="menu left">
+                  {fileItems.map((it, i) => it.sep ? <div key={i} className="menu-sep" /> : (
+                    <button key={i} className="menu-item" onClick={() => { setOpenMenu(null); it.onClick!(); }}>
+                      {it.icon!({ size: 15 })}<span>{it.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="tb-center">
+          <div className="mode-switch">
+            <button className={`mode-btn${mode === "design" ? " is-active" : ""}`} data-m="design" onClick={() => setMode("design")}>
+              <span className="dot" /> Design
+            </button>
+            <button className={`mode-btn${mode === "animate" ? " is-active" : ""}`} data-m="animate" onClick={() => setMode("animate")}>
+              <span className="dot" /> Animate
+            </button>
+          </div>
+        </div>
+
+        <div className="tb-right">
+          <button className="iconbtn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">{Icon.undo()}</button>
+          <button className="iconbtn" onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">{Icon.redo()}</button>
+          <div className="tb-divider" />
+          <div className="menu-wrap">
+            <button className="btn btn-accent" onClick={() => setOpenMenu(openMenu === "export" ? null : "export")}>
+              {Icon.download({ size: 15 })} Export {Icon.chevron({ size: 13 })}
+            </button>
+            {openMenu === "export" && (
+              <>
+                <div className="scrim" onPointerDown={() => setOpenMenu(null)} />
+                <div className="menu right">
+                  {exportItems.map((it, i) => (
+                    <button key={i} className="menu-item" onClick={() => { setOpenMenu(null); it.onClick(); }}>
+                      {it.icon({ size: 15 })}<span>{it.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <div className="middle">
         <LayersPanel
           layers={layers}
           groups={groups}
@@ -876,44 +939,52 @@ export default function App() {
         />
 
         <div
-          className="canvas-wrap"
+          className={`canvas-area${mode === "animate" ? " mode-animate" : ""}${tool === "pencil" ? " tool-pencil" : ""}${dragging ? " is-moving" : ""}`}
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            const f = e.dataTransfer.files?.[0];
-            if (f) loadFile(f);
-          }}
+          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}
         >
+          {/* tool rail */}
+          <div className="tool-rail">
+            <button className={`tool-btn${tool === "select" ? " is-active" : ""}`} onClick={() => switchTool("select")} title="Select / move (V)">{Icon.cursor()}</button>
+            <button className={`tool-btn${tool === "pencil" ? " is-active" : ""}`} onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")} title="Pencil — draw a shape (P)">{Icon.pen()}</button>
+          </div>
+
           {tool === "pencil" && (
             <div className="pencil-panel">
-              <strong>Pencil</strong>
-              <label>
-                Size<span>{pencil.size}</span>
-                <input
-                  type="range" min={2} max={80} step={1} value={pencil.size}
-                  onChange={(e) => setPencil((p) => ({ ...p, size: parseInt(e.target.value, 10) }))}
-                />
+              <div className="pp-title">Pencil</div>
+              <label>Size<span className="ctl-val">{pencil.size}</span>
+                <input type="range" min={2} max={80} step={1} value={pencil.size}
+                  onChange={(e) => setPencil((p) => ({ ...p, size: parseInt(e.target.value, 10) }))} />
               </label>
-              <label>
-                Smoothing<span>{pencil.smoothing}</span>
-                <input
-                  type="range" min={0} max={100} step={1} value={pencil.smoothing}
-                  onChange={(e) => setPencil((p) => ({ ...p, smoothing: parseInt(e.target.value, 10) }))}
-                />
+              <label>Smoothing<span className="ctl-val">{pencil.smoothing}</span>
+                <input type="range" min={0} max={100} step={1} value={pencil.smoothing}
+                  onChange={(e) => setPencil((p) => ({ ...p, smoothing: parseInt(e.target.value, 10) }))} />
               </label>
-              <label className="pencil-fill">
-                Fill
-                <input
-                  type="color" value={pencil.fillColor}
-                  onChange={(e) => setPencil((p) => ({ ...p, fillColor: e.target.value }))}
-                />
+              <label className="pencil-fill">Fill
+                <input type="color" value={pencil.fillColor}
+                  onChange={(e) => setPencil((p) => ({ ...p, fillColor: e.target.value }))} />
               </label>
-              <div className="pencil-actions">
-                <button className="mini" onClick={finishDrawing} title="Start a separate shape">New Shape</button>
-                <button className="mini" onClick={() => switchTool("select")}>Done</button>
+              <div className="pp-actions">
+                <button className="btn" onClick={finishDrawing} title="Start a separate shape">New Shape</button>
+                <button className="btn btn-accent" onClick={() => switchTool("select")}>Done</button>
               </div>
             </div>
           )}
+
+          {/* floating contextual toolbar */}
+          {primary && tool === "select" && (
+            <div className="ctx-toolbar">
+              <span className="ctx-label">
+                <span className="ctx-swatch" /> <b>{selectedIds.length > 1 ? `${selectedIds.length} layers` : primary.name}</b>
+                {selectedIds.length <= 1 && <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>{primary.params.count}×</span>}
+              </span>
+              <button className="ctx-btn" onClick={onDuplicateSelected}>{Icon.duplicate({ size: 15 })} Duplicate</button>
+              <button className="ctx-btn" onClick={resetCenter} disabled={!editableForControls}>{Icon.target({ size: 15 })} Center</button>
+              {canRadialize && <button className="ctx-btn" onClick={radializePrimary}>{Icon.sparkle({ size: 15 })} Radialize</button>}
+              <button className="ctx-btn danger" onClick={onDeleteSelected}>{Icon.trash({ size: 15 })} Delete</button>
+            </div>
+          )}
+
           <Canvas
             layers={layers}
             selectedIds={selectedSet}
@@ -940,41 +1011,73 @@ export default function App() {
             onWheel={onWheel}
             panBy={panBy}
           />
+
+          {/* zoom cluster */}
+          <div className="zoom-cluster">
+            <button onClick={() => zoomBy(1 / 1.2)} title="Zoom out">{Icon.minus({ size: 16 })}</button>
+            <span className="zoom-val">{Math.round(viewport.s * 100)}%</span>
+            <button onClick={() => zoomBy(1.2)} title="Zoom in">{Icon.plus({ size: 16 })}</button>
+          </div>
+
+          {/* hint chip */}
+          <div className="canvas-hint">
+            {mode === "animate" && drawingMotionPath
+              ? <>{Icon.pen({ size: 14 })} Drag the path handles to shape the motion</>
+              : tool === "pencil"
+              ? <>{Icon.pen({ size: 14 })} Draw a shape · multiple strokes compose one motif</>
+              : <>{Icon.cursor({ size: 14 })} Grab artwork to move · drag empty canvas to marquee-select</>}
+          </div>
+
+          {notice && <div className="toast toast-warn">{notice}</div>}
         </div>
 
-        <aside className="sidebar">
-          <Controls
-            primary={primary}
-            selectionCount={editableSelected.length}
-            allSelected={allSelected}
-            editable={editableForControls}
-            primaryParamsRef={primaryParamsRef}
-            applyParamDelta={scene.applyParamDelta}
-            onCommitDelta={onCommitDelta}
-            onCommitAbsolute={onCommitAbsolute}
-            setDragging={setDragging}
-            onToggleVisible={() => primaryId && onToggleVisible(primaryId)}
-            onToggleLocked={() => primaryId && onToggleLocked(primaryId)}
-            animationEditable={animationEditable}
-            drawingMotionPath={drawingMotionPath}
-            animationPlaying={animationPlaying}
-            onBeginAnimateCenter={beginAnimateCenter}
-            onTogglePlayback={() => setAnimationPlaying((p) => !p)}
-            onDeleteAnimation={deletePrimaryAnimation}
-            onUpdateAnimation={updatePrimaryAnimation}
-          />
-        </aside>
+        <Controls
+          mode={mode}
+          primary={primary}
+          selectionCount={editableSelected.length}
+          allSelected={allSelected}
+          editable={editableForControls}
+          primaryParamsRef={primaryParamsRef}
+          applyParamDelta={scene.applyParamDelta}
+          onCommitDelta={onCommitDelta}
+          onCommitAbsolute={onCommitAbsolute}
+          setDragging={setDragging}
+          onToggleVisible={() => primaryId && onToggleVisible(primaryId)}
+          onToggleLocked={() => primaryId && onToggleLocked(primaryId)}
+          animationEditable={animationEditable}
+          drawingMotionPath={drawingMotionPath}
+          animationPlaying={animationPlaying}
+          onBeginAnimateCenter={beginAnimateCenter}
+          onTogglePlayback={() => setAnimationPlaying((p) => !p)}
+          onDeleteAnimation={deletePrimaryAnimation}
+          onUpdateAnimation={updatePrimaryAnimation}
+        />
       </div>
 
-      <div className="bottombar">
-        <span>Zoom {Math.round(viewport.s * 100)}%</span>
-        <span>{layers.length} layers · {visibleCount} visible · {groups.length} groups</span>
-        {selectedIds.length > 1 ? (
-          <span>{selectedIds.length} selected ({editableSelected.length} editable)</span>
-        ) : (
-          primary && <span>Sel: {primary.name}</span>
-        )}
-        <span className="hint">⌘Z undo · ⌘⇧Z redo · ⌘A all · drag empty canvas = marquee select · space/middle = pan</span>
+      {mode === "animate" && (
+        <Timeline
+          layers={layers}
+          total={animTotal}
+          playTime={playTime}
+          playing={animationPlaying}
+          loop={loop}
+          selectedId={primaryId}
+          onTogglePlay={() => setAnimationPlaying((p) => !p)}
+          onToStart={() => { setAnimationPlaying(false); setPlayTime(0); }}
+          onToggleLoop={() => setLoop((l) => !l)}
+          onScrub={(t) => setPlayTime(t)}
+          onSelect={(id) => selectSingle(id)}
+        />
+      )}
+
+      <div className="statusbar">
+        <span><span className="stat-k">zoom</span>{Math.round(viewport.s * 100)}%</span>
+        <span className="stat-sep" />
+        <span><span className="stat-k">layers</span>{layers.length}</span>
+        <span className="stat-sep" />
+        <span><span className="stat-k">mode</span>{mode}</span>
+        <span className="status-flex" />
+        <span className="status-hints">⌘Z undo · ⌘A all · drag empty = marquee · space/middle = pan · scroll = zoom</span>
       </div>
     </div>
   );
