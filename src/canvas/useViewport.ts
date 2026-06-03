@@ -1,0 +1,50 @@
+// Pan/zoom state and screen<->world mapping. PRD §5.
+// The svg fills its container with no viewBox, so 1 user unit = 1 CSS px before
+// the pan/zoom group's transform. Pan/zoom may use React state for the spike: a
+// re-render per wheel tick only changes the group transform, not instance geometry.
+import { useCallback, useState } from "react";
+import { clamp } from "./repeatMath";
+import type { Viewport } from "../types";
+
+const MIN_S = 0.1;
+const MAX_S = 12;
+
+export interface ViewportApi {
+  viewport: Viewport;
+  setViewport: React.Dispatch<React.SetStateAction<Viewport>>;
+  onWheel: (e: React.WheelEvent<SVGSVGElement>) => void;
+  /** Pan by a screen-pixel delta (already in svg-local px). */
+  panBy: (dx: number, dy: number) => void;
+}
+
+export function useViewport(initial: Viewport): ViewportApi {
+  const [viewport, setViewport] = useState<Viewport>(initial);
+
+  const onWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const lx = e.clientX - rect.left; // svg-local px (1:1 with user units)
+    const ly = e.clientY - rect.top;
+
+    setViewport((v) => {
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      const newS = clamp(v.s * factor, MIN_S, MAX_S);
+      if (newS === v.s) return v;
+      // Keep the world point under the cursor fixed: world = (local - t)/s.
+      const worldX = (lx - v.tx) / v.s;
+      const worldY = (ly - v.ty) / v.s;
+      return {
+        s: newS,
+        tx: lx - worldX * newS,
+        ty: ly - worldY * newS,
+      };
+    });
+  }, []);
+
+  const panBy = useCallback((dx: number, dy: number) => {
+    setViewport((v) => ({ ...v, tx: v.tx + dx, ty: v.ty + dy }));
+  }, []);
+
+  return { viewport, setViewport, onWheel, panBy };
+}
