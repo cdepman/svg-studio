@@ -22,13 +22,18 @@ export function angleStep(count: number): number {
  * reference the center. PRD §8.
  */
 export function instanceTransform(p: RepeatParams, i: number): string {
+  return `${instanceSpokeTransform(p, i)} ${instanceLocalTransform(p, i)}`;
+}
+
+export function instanceSpokeTransform(p: RepeatParams, i: number): string {
+  const angle = p.angleOffset + i * angleStep(p.count);
+  return `rotate(${f(angle)}) translate(${f(p.radiusOffset)},0)`;
+}
+
+export function instanceLocalTransform(p: RepeatParams, i: number): string {
   const angle = p.angleOffset + i * angleStep(p.count);
   const scale = 1 + i * p.scaleStep; // scaleStep can be negative
   const mirror = p.mirrorAlternates && i % 2 === 1 ? -1 : 1;
-
-  // Place onto the spoke, then apply the copy's own orientation as a final
-  // local rotation, then mirror/scale.
-  const placement = `rotate(${f(angle)}) translate(${f(p.radiusOffset)},0)`;
 
   const localOrientation =
     p.orientationMode === "rotateWithCircle"
@@ -39,7 +44,7 @@ export function instanceTransform(p: RepeatParams, i: number): string {
 
   const scaleStr = `scale(${f(mirror * scale)},${f(scale)})`;
 
-  return `${placement} ${localOrientation} ${scaleStr}`;
+  return `${localOrientation} ${scaleStr}`;
 }
 
 export function instanceOpacity(p: RepeatParams, i: number): number {

@@ -9,6 +9,8 @@
 import { memo } from "react";
 import {
   instanceOpacity,
+  instanceLocalTransform,
+  instanceSpokeTransform,
   instanceTransform,
   paintOrder,
   seamHalves,
@@ -43,21 +45,26 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
   const Use = (i: number, alt = false) => (
     <g
       key={`${instanceKeyPrefix}:${alt ? `${i}-alt` : i}`}
-      className={`instance-motion-wrapper motion-wrapper ${motionClassName(layer.id)}`}
-      style={instanceMotionStyle(layer, i)}
     >
       <g
         data-i={i}
         className="instance-placement"
-        transform={instanceTransform(p, i)}
+        transform={layer.animation?.enabled ? instanceSpokeTransform(p, i) : instanceTransform(p, i)}
         opacity={instanceOpacity(p, i)}
       >
-        <g className="instance-follow-wrapper">
-          <use
-            data-i={i}
-            className={alt ? "instance alt" : "instance"}
-            href={`#${motifId}`}
-          />
+        <g
+          className={`instance-motion-wrapper motion-wrapper ${motionClassName(layer.id)}`}
+          style={instanceMotionStyle(layer, i)}
+        >
+          <g className="instance-local-transform" transform={layer.animation?.enabled ? instanceLocalTransform(p, i) : undefined}>
+            <g className="instance-follow-wrapper">
+              <use
+                data-i={i}
+                className={alt ? "instance alt" : "instance"}
+                href={`#${motifId}`}
+              />
+            </g>
+          </g>
         </g>
       </g>
     </g>

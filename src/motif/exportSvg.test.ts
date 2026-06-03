@@ -128,13 +128,14 @@ describe("buildExportSvg (PRD §14)", () => {
     expect(svg).not.toContain('clip-path="url(#seam-');
   });
 
-  it("animated export attaches tuck clips to moving wrappers", () => {
+  it("animated export keeps tuck clips outside the moving wrappers", () => {
     const a = mk({ id: "a", params: { ...params, tuck: true, seamBlend: 2 } });
     a.animation = createCenterPathAnimation(a, { x: 110, y: 70 });
 
     const svg = buildAnimatedExportSvg([a]);
     expect(svg).toContain('clip-path="url(#seam-opp-a)"');
     expect(svg).toContain('clip-path="url(#seam-half-a)"');
+    expect(svg).not.toContain('class="instance-motion-wrapper motion-wrapper motion-a" clip-path=');
     expect(svg).toContain('class="alt"');
     expect((svg.match(/class="instance-motion-wrapper motion-wrapper motion-a"/g) ?? []).length).toBe(8);
   });

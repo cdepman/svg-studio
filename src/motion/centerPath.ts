@@ -1,4 +1,3 @@
-import { angleStep } from "../canvas/repeatMath";
 import type { CSSProperties } from "react";
 import type { Center, CenterPathAnimation, Layer, LayerAnimation, RepeatParams } from "../types";
 
@@ -74,7 +73,7 @@ export function instanceMotionVectorForGeometry(
   scale: number,
   raw: LayerAnimation | undefined,
   referencePoint: Center,
-  index: number
+  _index: number
 ) {
   if (!raw || raw.type !== "centerPath") return null;
   const animation = normalizedAnimation(raw);
@@ -82,18 +81,18 @@ export function instanceMotionVectorForGeometry(
   const refStart = { x: start.x - referencePoint.x, y: start.y - referencePoint.y };
   const refEnd = { x: end.x - referencePoint.x, y: end.y - referencePoint.y };
   const refDelta = { x: end.x - start.x, y: end.y - start.y };
-  const worldStart = rotate(refStart, index * angleStep(params.count));
-  const worldEnd = rotate(refEnd, index * angleStep(params.count));
-  const worldDelta = rotate(refDelta, index * angleStep(params.count));
+  const localStart = rotate(refStart, -params.angleOffset);
+  const localEnd = rotate(refEnd, -params.angleOffset);
+  const localDelta = rotate(refDelta, -params.angleOffset);
   const safeScale = scale || 1;
   return {
-    startDx: worldStart.x / safeScale,
-    startDy: worldStart.y / safeScale,
-    endDx: worldEnd.x / safeScale,
-    endDy: worldEnd.y / safeScale,
-    dx: worldEnd.x / safeScale,
-    dy: worldEnd.y / safeScale,
-    angle: Math.atan2(worldDelta.y, worldDelta.x) * (180 / Math.PI),
+    startDx: localStart.x / safeScale,
+    startDy: localStart.y / safeScale,
+    endDx: localEnd.x / safeScale,
+    endDy: localEnd.y / safeScale,
+    dx: localEnd.x / safeScale,
+    dy: localEnd.y / safeScale,
+    angle: Math.atan2(localDelta.y, localDelta.x) * (180 / Math.PI),
   };
 }
 
@@ -107,18 +106,23 @@ export function instanceMotionVector(layer: Layer, index: number) {
   );
 }
 
+export function animationReachPaddingForGeometry(
+  params: RepeatParams,
+  scale: number,
+  raw: LayerAnimation | undefined,
+  referencePoint: Center
+) {
+  const v = instanceMotionVectorForGeometry(params, scale, raw, referencePoint, 0);
+  if (!v) return 0;
+  return Math.max(Math.hypot(v.startDx, v.startDy), Math.hypot(v.endDx, v.endDy));
+}
+
 export function animationReachPadding(layer: Layer) {
-  const raw = layer.animation;
-  if (!raw || raw.type !== "centerPath" || !raw.enabled) return 0;
-  const referencePoint = referenceInstancePoint(layer);
-  const animation = normalizedAnimation(raw);
-  const { start, end } = animationPoints(animation, referencePoint);
-  const safeScale = Math.abs(layer.scale) || 1;
-  return (
-    Math.max(
-      Math.hypot(start.x - referencePoint.x, start.y - referencePoint.y),
-      Math.hypot(end.x - referencePoint.x, end.y - referencePoint.y)
-    ) / safeScale
+  return animationReachPaddingForGeometry(
+    layer.params,
+    layer.scale,
+    layer.animation,
+    referenceInstancePoint(layer)
   );
 }
 

@@ -3,6 +3,8 @@
 // is never exported.
 import {
   instanceOpacity,
+  instanceLocalTransform,
+  instanceSpokeTransform,
   instanceTransform,
   maxAbsScale,
   paintOrder,
@@ -58,13 +60,14 @@ function layerMarkup(layer: Layer, animated: boolean): string {
   const useTuck = params.tuck;
 
   const useEl = (i: number, alt = false) =>
-    `          <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}"${animated ? instanceMotionStyleText(layer, i) : ""}>
-            <g class="instance-placement" transform="${instanceTransform(
-              params,
-              i
-            )}" opacity="${instanceOpacity(params, i)}">
-              <g class="instance-follow-wrapper">
-                <use${alt ? ' class="alt"' : ""} href="#${motifId}"/>
+    `          <g>
+            <g class="instance-placement" transform="${animated && layer.animation?.enabled ? instanceSpokeTransform(params, i) : instanceTransform(params, i)}" opacity="${instanceOpacity(params, i)}">
+              <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}"${animated ? instanceMotionStyleText(layer, i) : ""}>
+                <g class="instance-local-transform"${animated && layer.animation?.enabled ? ` transform="${instanceLocalTransform(params, i)}"` : ""}>
+                  <g class="instance-follow-wrapper">
+                    <use${alt ? ' class="alt"' : ""} href="#${motifId}"/>
+                  </g>
+                </g>
               </g>
             </g>
           </g>`;

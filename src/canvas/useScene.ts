@@ -11,11 +11,14 @@ import { useCallback, useMemo, useRef } from "react";
 import {
   boundsReach,
   instanceOpacity,
+  instanceLocalTransform,
+  instanceSpokeTransform,
   instanceTransform,
   seamHalves,
 } from "./repeatMath";
 import { GIZMO_DUP_GAP, GIZMO_HANDLE } from "../config";
 import {
+  animationReachPaddingForGeometry,
   instanceMotionVectorForGeometry,
   referenceInstancePointForGeometry,
 } from "../motion/centerPath";
@@ -173,8 +176,14 @@ export function useScene(): Scene {
         if (root) {
           root.querySelectorAll<SVGGElement>(".instance-placement").forEach((g) => {
             const i = Number(g.dataset.i);
-            g.setAttribute("transform", instanceTransform(p, i));
+            g.setAttribute("transform", t.animation?.enabled ? instanceSpokeTransform(p, i) : instanceTransform(p, i));
             g.setAttribute("opacity", String(instanceOpacity(p, i)));
+            if (t.animation?.enabled) {
+              g.querySelector<SVGGElement>(".instance-local-transform")?.setAttribute(
+                "transform",
+                instanceLocalTransform(p, i)
+              );
+            }
           });
           if (t.animation?.enabled) {
             const fallbackStart = referenceInstancePointForGeometry(p, t.center, t.scale);
@@ -197,7 +206,12 @@ export function useScene(): Scene {
         }
         const clips = seamClipsOf(t.id);
         if (clips.opp || clips.seam) {
-          const h = seamHalves(p, t.motifBox);
+          const fallbackStart = referenceInstancePointForGeometry(p, t.center, t.scale);
+          const h = seamHalves(
+            p,
+            t.motifBox,
+            animationReachPaddingForGeometry(p, t.scale, t.animation, fallbackStart)
+          );
           clips.opp?.setAttribute("d", h.oppHalfD);
           clips.seam?.setAttribute("d", h.seamHalfD);
         }

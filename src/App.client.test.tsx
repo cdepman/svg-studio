@@ -189,14 +189,15 @@ describe("App layer interactions", () => {
     expect(line.getAttribute("y1")).toBe("40");
   });
 
-  it("keeps tucked split clips attached to moving wrappers during playback", () => {
+  it("keeps tucked split clips outside the moving wrappers during playback", () => {
     click(button("Animate Center"));
     click(button("Play"));
 
     expect(canvas().querySelectorAll("clipPath[id^='seam-']")).toHaveLength(2);
-    expect(canvas().querySelectorAll(".instance-motion-wrapper[clip-path]")).toHaveLength(24);
+    expect(canvas().querySelectorAll(".instance-motion-wrapper[clip-path]")).toHaveLength(0);
     expect(canvas().querySelectorAll("use.instance.alt")).toHaveLength(12);
     expect(instances()).toHaveLength(12);
+    expect(canvas().querySelectorAll(".instance-placement > .instance-motion-wrapper")).toHaveLength(24);
   });
 
   it("keeps animated repeat instances synchronized when count changes during playback", () => {
