@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
-import { Canvas } from "./Canvas";
+import { Canvas, type SelectionBox } from "./Canvas";
 import { useScene } from "./useScene";
+import { boundsReach } from "./repeatMath";
 import { importSvgFromText } from "../motif/importSvg";
 import { DEFAULT_MOTIF_SVG } from "../defaultMotif";
-import type { RepeatParams } from "../types";
-
-const motif = importSvgFromText(DEFAULT_MOTIF_SVG);
+import { createLayer } from "../document/layers";
+import type { Center, Layer, RepeatParams } from "../types";
 
 const params: RepeatParams = {
   count: 8,
@@ -22,17 +22,40 @@ const params: RepeatParams = {
   seamBlend: 2,
 };
 
-// useScene is a hook, so drive Canvas through a tiny host component.
-function Host({ p }: { p: RepeatParams }) {
+function layer(overrides: Partial<Layer> = {}): Layer {
+  return {
+    ...createLayer({ name: "L", motif: importSvgFromText(DEFAULT_MOTIF_SVG), params, center: { x: 0, y: 0 } }),
+    ...overrides,
+  };
+}
+
+// Mirror App's derivation of the editable-selected set -> boxes/handle.
+function derive(layers: Layer[], selected: Set<string>) {
+  const editable = layers.filter((l) => selected.has(l.id) && l.visible && !l.locked);
+  const boxes: SelectionBox[] = editable.map((l) => ({ id: l.id, center: l.center, reach: boundsReach(l.params, l.motif.box) }));
+  const handlePos: Center | null = editable.length
+    ? {
+        x: editable.reduce((a, l) => a + l.center.x, 0) / editable.length,
+        y: editable.reduce((a, l) => a + l.center.y, 0) / editable.length,
+      }
+    : null;
+  return { boxes, handlePos };
+}
+
+function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) {
   const scene = useScene();
+  const { boxes, handlePos } = derive(layers, selected);
   return (
     <Canvas
-      motif={motif}
-      params={p}
-      center={{ x: 0, y: 0 }}
+      layers={layers}
+      selectedIds={selected}
+      boxes={boxes}
+      handlePos={handlePos}
       viewport={{ tx: 0, ty: 0, s: 1 }}
       dragging={false}
       scene={scene}
+      onSelect={() => {}}
+      onMarqueeSelect={() => {}}
       onCenterPointerDown={() => {}}
       onWheel={() => {}}
       panBy={() => {}}
@@ -40,26 +63,38 @@ function Host({ p }: { p: RepeatParams }) {
   );
 }
 
-describe("Canvas seam tuck", () => {
-  it("emits no clip path and exactly `count` instances when tuck is off", () => {
-    const html = renderToString(<Host p={params} />);
-    expect(html).not.toContain("clipPath");
-    expect((html.match(/class="instance"/g) ?? []).length).toBe(8);
+describe("Canvas layer stack + selection", () => {
+  it("renders only visible layers, back-to-front", () => {
+    const a = layer({ id: "a" });
+    const b = layer({ id: "b", visible: false });
+    const html = renderToString(<Host layers={[a, b]} selected={new Set(["a"])} />);
+    expect(html).toContain('data-layer-id="a"');
+    expect(html).not.toContain('data-layer-id="b"');
   });
 
-  it("emits the seam-wedge clip and k extra redrawn copies when tuck is on", () => {
-    const html = renderToString(<Host p={{ ...params, tuck: true, seamBlend: 3 }} />);
-    expect(html).toContain('clipPath id="seam-wedge"');
-    expect(html).toContain('clip-path="url(#seam-wedge)"');
-    // 8 main copies + 3 redrawn = 11
-    expect((html.match(/class="instance"/g) ?? []).length).toBe(11);
+  it("draws a selection box + handle for a selected, editable layer", () => {
+    const a = layer({ id: "a" });
+    const html = renderToString(<Host layers={[a]} selected={new Set(["a"])} />);
+    expect(html).toContain('data-sel-for="a"');
+    expect(html).toContain("center-handle");
   });
 
-  it("relocating the seam (paintOffset) reorders the painted copies", () => {
-    const html = renderToString(<Host p={{ ...params, paintOffset: 3 }} />);
-    // first painted <use> should now carry data-i="3"
-    const firstUse = html.indexOf("<use");
-    const slice = html.slice(firstUse, firstUse + 80);
-    expect(slice).toContain('data-i="3"');
+  it("draws no box/handle for a selected locked layer (art still shows)", () => {
+    const a = layer({ id: "a", locked: true });
+    const html = renderToString(<Host layers={[a]} selected={new Set(["a"])} />);
+    expect(html).toContain('data-layer-id="a"'); // artwork rendered
+    expect(html).not.toContain('data-sel-for="a"'); // not editable -> no box
+    expect(html).not.toContain("center-handle");
+  });
+
+  it("draws a box for every selected layer when all are selected (synchronized)", () => {
+    const a = layer({ id: "a", center: { x: -50, y: 0 } });
+    const b = layer({ id: "b", center: { x: 50, y: 0 } });
+    const html = renderToString(<Host layers={[a, b]} selected={new Set(["a", "b"])} />);
+    expect(html).toContain('data-sel-for="a"');
+    expect(html).toContain('data-sel-for="b"');
+    // one combined handle at the centroid (x = 0)
+    expect((html.match(/center-handle/g) ?? []).length).toBe(1);
+    expect(html).toContain("translate(0,0)");
   });
 });

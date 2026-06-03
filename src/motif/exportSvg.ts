@@ -1,60 +1,91 @@
-// Resolve the repeat into a fresh, portable SVG. Stretch goal — strictly
-// post-validation. PRD §12.
+// Resolve visible layers into a fresh, portable SVG, back-to-front. PRD §12, §14.
+// Hidden layers are omitted; locked state does not affect export; selection UI
+// is never exported.
 import {
   instanceOpacity,
   instanceTransform,
+  maxAbsScale,
   paintOrder,
-  seamReach,
-  seamWedgePath,
-  tuckIndices,
+  seamHalves,
 } from "../canvas/repeatMath";
-import type { Center, Motif, RepeatParams } from "../types";
+import type { Layer } from "../types";
 
-export function buildExportSvg(
-  motif: Motif,
-  params: RepeatParams,
-  center: Center
-): string {
-  // Generous bounds: farthest a (possibly scaled) copy can reach from center.
-  let maxAbsScale = 1;
-  for (let i = 0; i < params.count; i++) {
-    maxAbsScale = Math.max(maxAbsScale, Math.abs(1 + i * params.scaleStep));
-  }
-  const halfDiag =
-    0.5 * Math.hypot(motif.box.width, motif.box.height) * maxAbsScale;
+function layerBounds(layer: Layer) {
+  const { params, center, motif } = layer;
+  const halfDiag = 0.5 * Math.hypot(motif.box.width, motif.box.height) * maxAbsScale(params);
   const reach = params.radiusOffset + halfDiag;
-  const bound = reach + 8;
-  const size = 2 * bound;
-  const viewBox = `${center.x - bound} ${center.y - bound} ${size} ${size}`;
+  return {
+    minX: center.x - reach,
+    minY: center.y - reach,
+    maxX: center.x + reach,
+    maxY: center.y + reach,
+  };
+}
+
+function layerMarkup(layer: Layer): string {
+  const { params, center, motif, id } = layer;
+  const motifId = `motif-${id}`;
 
   const useEl = (i: number) =>
-    `    <use href="#motif" transform="${instanceTransform(
+    `      <use href="#${motifId}" transform="${instanceTransform(
       params,
       i
     )}" opacity="${instanceOpacity(params, i)}"/>`;
 
-  // Paint in z-order so a relocated seam is preserved in the export.
-  const uses = paintOrder(params.count, params.paintOffset).map(useEl);
-
-  // Resolve the tuck (clip + redrawn copies) into the output too. PRD §12.
-  let wedgeDef = "";
-  let tuckGroup = "";
+  let defs = "";
+  let body: string;
   if (params.tuck) {
-    const d = seamWedgePath(params, seamReach(params, motif.box));
-    wedgeDef = `\n    <clipPath id="seam-wedge" clipPathUnits="userSpaceOnUse"><path d="${d}"/></clipPath>`;
-    const redraw = tuckIndices(params.count, params.paintOffset, params.seamBlend)
-      .map(useEl)
-      .join("\n");
-    tuckGroup = `\n    <g clip-path="url(#seam-wedge)">\n${redraw}\n    </g>`;
+    // Two complementary half-disks (see seamHalves) — seamless, no double-blend.
+    const h = seamHalves(params, motif.box);
+    const oppClip = `seam-opp-${id}`;
+    const seamClip = `seam-half-${id}`;
+    defs =
+      `\n    <clipPath id="${oppClip}" clipPathUnits="userSpaceOnUse"><path d="${h.oppHalfD}"/></clipPath>` +
+      `\n    <clipPath id="${seamClip}" clipPathUnits="userSpaceOnUse"><path d="${h.seamHalfD}"/></clipPath>`;
+    body =
+      `    <g clip-path="url(#${oppClip})">\n${h.oppOrder.map(useEl).join("\n")}\n    </g>\n` +
+      `    <g clip-path="url(#${seamClip})">\n${h.seamOrder.map(useEl).join("\n")}\n    </g>`;
+  } else {
+    body = paintOrder(params.count, params.paintOffset).map(useEl).join("\n");
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${size}" height="${size}">
-  <defs>
-    <g id="motif" transform="translate(${-motif.anchorX},${-motif.anchorY})">${motif.innerHtml}</g>${wedgeDef}
+  return `  <defs>
+    <g id="${motifId}" transform="translate(${-motif.anchorX},${-motif.anchorY})">${motif.innerHtml}</g>${defs}
   </defs>
-  <g transform="translate(${center.x},${center.y})">
-${uses.join("\n")}${tuckGroup}
-  </g>
+  <g class="layer" data-layer-id="${id}" transform="translate(${center.x},${center.y})">
+${body}
+  </g>`;
+}
+
+export function buildExportSvg(layers: Layer[]): string {
+  const visible = layers.filter((l) => l.visible);
+  if (visible.length === 0) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"></svg>\n`;
+  }
+
+  // Union of every visible layer's bounds, with a margin.
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const l of visible) {
+    const b = layerBounds(l);
+    minX = Math.min(minX, b.minX);
+    minY = Math.min(minY, b.minY);
+    maxX = Math.max(maxX, b.maxX);
+    maxY = Math.max(maxY, b.maxY);
+  }
+  const margin = 8;
+  const x = minX - margin;
+  const y = minY - margin;
+  const w = maxX - minX + margin * 2;
+  const h = maxY - minY + margin * 2;
+
+  // Back-to-front = array order.
+  const body = visible.map(layerMarkup).join("\n");
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w}" height="${h}">
+${body}
 </svg>
 `;
 }

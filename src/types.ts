@@ -60,6 +60,23 @@ export interface Center {
   y: number;
 }
 
+/**
+ * A flat layer: one radial-repeat composition. No nesting, no folders. PRD §4.
+ * `center` is kept off RepeatParams on purpose so the repeat math stays
+ * center-independent (instances never reference the center).
+ */
+export interface Layer {
+  id: string;
+  name: string;
+  visible: boolean;
+  locked: boolean;
+  motif: Motif;
+  params: RepeatParams;
+  center: Center;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Viewport {
   tx: number;
   ty: number;

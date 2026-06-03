@@ -37,6 +37,31 @@ pink center handle to move the repeat center.
    (≤24, evenly spaced) renders. A clean swap on `pointerup`, not a per-frame
    decision.
 
+## Layers & selection
+
+A flat layer document (no nesting): each layer is one radial-repeat composition.
+Add / duplicate (`⌘D`) / delete (`Del`) / rename (double-click) / reorder (drag a
+row, or `⌘[` / `⌘]`, `⌘⇧[` / `⌘⇧]`), toggle visibility and lock. `layers[0]` is the
+back; the panel renders reversed (top row = front). Export walks visible layers
+back-to-front. See `src/document/layers.ts` (pure, unit-tested).
+
+**Selection is shown on the canvas:** a dashed accent bounding box is drawn
+around each selected, *editable* (visible + unlocked) layer, plus the single
+center handle. A locked/hidden selected layer shows in the panel only.
+
+**Marquee multi-select:** drag on empty canvas to rubber-band a rectangle;
+every visible, unlocked layer whose artwork box it touches is selected (shift to
+add). Click a layer to select it (shift/⌘-click toggles), or `⌘A` for all.
+
+**Select all & synchronized manipulation** (`⌘A`, or the Select All button):
+dragging the one combined handle, or moving any continuous slider, applies a
+**relative delta** to every selected layer — preserving the differences between
+them. Discrete controls (count, orientation, mirror, seam) set an absolute value
+on all selected. The imperative path is unchanged in spirit: a synchronized drag
+mutates each selected layer's `repeat-root` + box transform directly (one
+`setAttribute` per moved node per frame), with zero React commits on
+`pointermove`. The combined handle sits at the centroid of the selected centers.
+
 ## Seam handling
 
 Copies paint `0..N-1` and later = on top, so the overlap is consistent the whole
@@ -47,17 +72,21 @@ That single inconsistent adjacency is the seam — the card-loop paradox. It is
 - **Seam position** (`paintOffset`) — relocates the seam by rotating the *paint
   order* (z-order), not the geometry. One control; drop the seam at the back or
   in a dense region where the eye doesn't track individual copies.
-- **Tuck** + **Seam blend (k)** — the real fix. After painting all copies,
-  redraw the first `k` clipped to a wedge straddling the seam, so copy 0 sits
-  *over* the last copy there and the overlap reads continuous. `k` ≈ how many
-  neighbors a petal laps; tune by eye.
+- **Hide seam** (on by default) — automatic, no depth knob.
 
-The wedge lives in `repeat-root` local coords (`repeatMath.seamWedgePath`),
-depends only on count/angle/radius/scale/paint-order — **never the center** — so
-it travels with `translate(cx,cy)` for free during a center drag and is
-recomputed imperatively in `applyInstances` on the same param drags that already
-move the instances. Caveat: with `opacityStep < 1` the redraw double-blends
-inside the wedge (slightly darker); keep `k` small or relocate instead.
+The single global paint order is what forces the seam (the card-loop paradox), so
+we don't use one. `repeatMath.seamHalves` splits the ring into **two
+complementary half-disks**: the half *opposite* the chosen seam is drawn in the
+normal order (its discontinuity sits at the seam angle, outside this half), and
+the half *containing* the seam is drawn in an order rotated 180° (its
+discontinuity lands on the far side, outside this half). Because the two clips
+are complementary, every pixel is painted exactly once — **no double-blend** (the
+old dark blob) — and the two boundaries sit 90° from either discontinuity, where
+the orders agree on every overlap, so the joins are invisible. There is **no
+depth/blend parameter**: the only knob is *Seam position* (where the hidden split
+sits). Works identically for radial and heavily-overlapping tangential petals.
+The clips are in `repeat-root` local coords (never the center) and are rotated/
+scaled imperatively in `applyParamDelta` during param drags.
 
 ## Module layout
 

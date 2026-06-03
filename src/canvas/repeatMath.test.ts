@@ -4,11 +4,11 @@ import {
   instanceTransform,
   maxAbsScale,
   paintOrder,
-  seamWedgePath,
+  seamHalves,
   subsetIndices,
   tuckIndices,
 } from "./repeatMath";
-import type { RepeatParams } from "../types";
+import type { Box, RepeatParams } from "../types";
 
 const base: RepeatParams = {
   count: 8,
@@ -119,20 +119,33 @@ describe("maxAbsScale", () => {
   });
 });
 
-describe("seamWedgePath", () => {
-  it("is a closed sector path anchored at the local origin (center)", () => {
-    const d = seamWedgePath(base, 1000);
-    expect(d.startsWith("M 0,0 L")).toBe(true);
-    expect(d.endsWith("Z")).toBe(true);
-    // all coordinates finite
-    const nums = d.match(/-?\d+(\.\d+)?/g)!.map(Number);
-    expect(nums.every(Number.isFinite)).toBe(true);
+const leaf: Box = { x: 0, y: 0, width: 120, height: 80 };
+
+describe("seamHalves (two complementary half-disks; no depth)", () => {
+  it("returns two closed sector clips at the local origin", () => {
+    const h = seamHalves({ ...base, count: 24 }, leaf);
+    for (const d of [h.oppHalfD, h.seamHalfD]) {
+      expect(d.startsWith("M 0,0 L")).toBe(true);
+      expect(d.endsWith("Z")).toBe(true);
+    }
   });
-  it("does not depend on the center (it lives in repeat-root local coords)", () => {
-    // seamWedgePath takes no center argument at all; this documents the contract.
-    expect(seamWedgePath({ ...base, seamBlend: 1 }, 500)).toBe(
-      seamWedgePath({ ...base, seamBlend: 1 }, 500)
-    );
+
+  it("paints each half in a full paint order, rotated ~N/2 apart", () => {
+    const h = seamHalves({ ...base, count: 24, paintOffset: 0 }, leaf);
+    // every copy appears once in each half (complementary clips do the masking)
+    expect([...h.oppOrder].sort((a, b) => a - b)).toEqual([...Array(24).keys()]);
+    expect([...h.seamOrder].sort((a, b) => a - b)).toEqual([...Array(24).keys()]);
+    // the seam half starts ~half a turn away from the opposite half
+    expect(h.oppOrder[0]).toBe(0);
+    expect(h.seamOrder[0]).toBe(12);
+  });
+
+  it("the opposite half's order has its seam where the seam half is clipped (and vice versa)", () => {
+    // opp order = paintOrder(F); seam order = paintOrder(F + N/2). Their first
+    // entries (and thus their discontinuities) are ~180° apart.
+    const h = seamHalves({ ...base, count: 8, paintOffset: 2 }, leaf);
+    expect(h.oppOrder[0]).toBe(2);
+    expect(h.seamOrder[0]).toBe((2 + 4) % 8);
   });
 });
 

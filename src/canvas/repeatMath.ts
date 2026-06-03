@@ -106,33 +106,64 @@ export function maxAbsScale(p: RepeatParams): number {
   return m;
 }
 
-/** Outer radius the seam wedge must reach to clip every petal. Depends on
- *  radius + motif size + scale — NOT the center. */
-export function seamReach(p: RepeatParams, box: Box): number {
-  return p.radiusOffset + Math.hypot(box.width, box.height) * maxAbsScale(p) + 24;
+/** Half-extent of a layer's artwork from its center: the farthest a (possibly
+ *  scaled) copy reaches. Used for the on-canvas selection bounding box and
+ *  export bounds. Depends on radius + motif size + scale — NOT the center. */
+export function boundsReach(p: RepeatParams, box: Box): number {
+  return p.radiusOffset + 0.5 * Math.hypot(box.width, box.height) * maxAbsScale(p);
 }
 
-/**
- * Clip-path geometry for the tuck, in repeat-root LOCAL coordinates (origin at
- * the center). A pie sector straddling the seam: from `seamBlend` steps clockwise
- * of the first-painted copy (covering its lap over the last-painted copies) to
- * just past that copy's spoke (so the over/under flip is cut mid-petal, where it
- * isn't legible — not in the gap, which would just relocate the seam).
- *
- * Outer edge sampled as a polygon to dodge SVG arc-flag ambiguity. Depends only
- * on count/angle/paintOffset/seamBlend/radius/scale, never center, so it travels
- * with translate(cx,cy) and costs nothing during a center drag.
- */
-export function seamWedgePath(p: RepeatParams, reach: number): string {
-  const step = angleStep(p.count);
-  const seamAngle = p.angleOffset + p.paintOffset * step; // first-painted copy's spoke
-  const from = seamAngle - clamp(Math.round(p.seamBlend), 1, p.count) * step;
-  const to = seamAngle + step / 2;
-  const samples = Math.max(2, Math.ceil(Math.abs(to - from) / 4));
+
+function sectorPath(fromDeg: number, toDeg: number, reach: number): string {
+  const samples = Math.max(2, Math.ceil(Math.abs(toDeg - fromDeg) / 4));
   const pts: string[] = ["0,0"];
   for (let s = 0; s <= samples; s++) {
-    const a = ((from + ((to - from) * s) / samples) * Math.PI) / 180;
+    const a = ((fromDeg + ((toDeg - fromDeg) * s) / samples) * Math.PI) / 180;
     pts.push(`${f(reach * Math.cos(a))},${f(reach * Math.sin(a))}`);
   }
   return `M ${pts.join(" L ")} Z`;
+}
+
+export interface SeamHalves {
+  /** Clip `d` for the half opposite the seam (excludes the seam angle). */
+  oppHalfD: string;
+  /** Clip `d` for the half containing the seam (excludes the rotated seam). */
+  seamHalfD: string;
+  /** Paint order for the opposite half (normal; its seam is at `seamAngle`). */
+  oppOrder: number[];
+  /** Paint order for the seam half (rotated 180°; its seam is on the far side). */
+  seamOrder: number[];
+}
+
+/**
+ * The seam is unavoidable in ANY single global paint order (the card-loop
+ * paradox), so we don't use one. We split the ring into two complementary
+ * half-disks:
+ *
+ *  - the half OPPOSITE the chosen seam is drawn in the normal order, whose own
+ *    discontinuity sits at `seamAngle` — outside this half, so invisible here;
+ *  - the half CONTAINING the seam is drawn in an order rotated by ~N/2, whose
+ *    discontinuity sits at `seamAngle + 180°` — outside this half too.
+ *
+ * The clips are complementary, so every pixel is painted exactly once (no
+ * double-blend), and the two boundaries sit 90° from either discontinuity, where
+ * the two orders agree on every overlap — so the join is seamless. There is NO
+ * depth parameter: the only choice is where to put the (hidden) split.
+ *
+ * Depends only on params + box, never the center.
+ */
+export function seamHalves(p: RepeatParams, box: Box): SeamHalves {
+  const step = angleStep(p.count);
+  const F = ((Math.round(p.paintOffset) % p.count) + p.count) % p.count;
+  // The fault line is the gap between the last- and first-painted copy.
+  const seamAngle = p.angleOffset + F * step - step / 2;
+  const half = Math.round(p.count / 2);
+  const reach = boundsReach(p, box) + 8;
+
+  return {
+    oppHalfD: sectorPath(seamAngle + 90, seamAngle + 270, reach),
+    seamHalfD: sectorPath(seamAngle - 90, seamAngle + 90, reach),
+    oppOrder: paintOrder(p.count, F),
+    seamOrder: paintOrder(p.count, (F + half) % p.count),
+  };
 }

@@ -2,17 +2,20 @@ import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
 import App from "./App";
 
-// Mount smoke test: the whole tree (default motif import, Canvas, Controls)
-// renders without throwing, and the default mandala produces instances.
+// Mount smoke test: the whole tree (default layer, layers panel, Canvas,
+// Controls) renders without throwing, with the default layer selected.
 describe("App", () => {
-  it("renders the canvas, the center handle, and the default instances", () => {
+  it("renders the panel, canvas, default layer instances, and the handle", () => {
     const html = renderToString(<App />);
     expect(html).toContain('class="canvas"');
+    expect(html).toContain("Layers");
+    expect(html).toContain("Radial Repeat 1");
+    // default layer selected -> handle shown
     expect(html).toContain("center-handle");
-    expect(html).toContain("center-hit");
-    // default count is 12 -> 12 <use class="instance">
-    const instances = html.match(/class="instance"/g) ?? [];
-    expect(instances).toHaveLength(12);
-    expect(html).toContain('id="motif"');
+    // default count 12 -> 12 instances, motif def is per-layer
+    expect((html.match(/class="instance"/g) ?? []).length).toBe(12);
+    expect(html).toContain('id="motif-');
+    // controls show the selected layer name
+    expect(html).toContain("Editing");
   });
 });

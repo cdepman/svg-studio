@@ -1,36 +1,35 @@
-// The parameter panel — the only "inspector". It edits the single repeat. PRD §13.
+// The parameter panel. Edits the SELECTED layer, or ALL selected layers in
+// synchrony. PRD §13 + synchronized manipulation.
 //
-// Continuous sliders MUST be uncontrolled during drag (defaultValue + ref, never
-// a value prop bound to state). On `input` we write the live DOM imperatively
-// (recompute the N instance transforms); on `change` (release) we commit to React
-// state. A controlled input would fight the imperative updates and force a
-// re-render per tick — exactly the failure this architecture avoids. PRD §10.
-//
-// We attach native `input`/`change` listeners (not React's onChange) because
-// React normalizes range onChange to fire continuously; the native `change`
-// event is what gives us true release semantics. The live value readout is also
-// updated imperatively, so a slider drag triggers ZERO React renders.
+// Continuous sliders apply a RELATIVE DELTA (current - drag-start value) to every
+// selected layer, preserving the differences between them. They stay uncontrolled
+// and use native input/change listeners so a slider drag triggers ZERO React
+// renders. Discrete controls (count, orientation, mirror, seam) set an ABSOLUTE
+// value on every selected layer.
 import { useEffect, useRef } from "react";
-import type { OrientationMode, RepeatParams } from "../types";
+import type { Layer, OrientationMode, RepeatParams } from "../types";
+import type { NumericParamKey } from "../canvas/useScene";
 
 interface ControlsProps {
-  params: RepeatParams;
-  /** Latest committed params, for merging the single live value during a drag. */
-  paramsRef: React.MutableRefObject<RepeatParams>;
-  applyInstances: (p: RepeatParams) => void;
-  onCommit: (partial: Partial<RepeatParams>) => void;
+  /** Representative layer for display + slider defaults + discrete values. */
+  primary: Layer | null;
+  /** Number of selected, editable layers (>1 means synchronized editing). */
+  selectionCount: number;
+  /** True when "all layers" is the active selection. */
+  allSelected: boolean;
+  /** At least one selected layer is editable (visible + unlocked). */
+  editable: boolean;
+  primaryParamsRef: React.MutableRefObject<RepeatParams | null>;
+  applyParamDelta: (key: NumericParamKey, delta: number) => void;
+  onCommitDelta: (key: NumericParamKey, delta: number) => void;
+  onCommitAbsolute: (partial: Partial<RepeatParams>) => void;
   setDragging: (d: boolean) => void;
+  onToggleVisible: () => void;
+  onToggleLocked: () => void;
 }
 
-type NumericKey =
-  | "angleOffset"
-  | "radiusOffset"
-  | "sourceRotation"
-  | "scaleStep"
-  | "opacityStep";
-
 interface SliderDef {
-  k: NumericKey;
+  k: NumericParamKey;
   label: string;
   min: number;
   max: number;
@@ -40,39 +39,48 @@ interface SliderDef {
 
 function ContinuousSlider({
   def,
-  paramsRef,
-  applyInstances,
-  onCommit,
+  primaryParamsRef,
+  applyParamDelta,
+  onCommitDelta,
   setDragging,
 }: {
   def: SliderDef;
-} & Omit<ControlsProps, "params">) {
+  primaryParamsRef: React.MutableRefObject<RepeatParams | null>;
+  applyParamDelta: (key: NumericParamKey, delta: number) => void;
+  onCommitDelta: (key: NumericParamKey, delta: number) => void;
+  setDragging: (d: boolean) => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const outRef = useRef<HTMLSpanElement>(null);
-  const initial = paramsRef.current[def.k];
+  const startRef = useRef(0);
+  const initial = primaryParamsRef.current ? primaryParamsRef.current[def.k] : 0;
 
   useEffect(() => {
     const el = inputRef.current!;
+    const onDown = () => {
+      startRef.current = primaryParamsRef.current
+        ? primaryParamsRef.current[def.k]
+        : parseFloat(el.value);
+      setDragging(true);
+    };
     const onInput = () => {
       const v = parseFloat(el.value);
       if (outRef.current) outRef.current.textContent = def.fmt(v);
-      // Merge the live value over latest committed params; write N transforms.
-      applyInstances({ ...paramsRef.current, [def.k]: v });
+      applyParamDelta(def.k, v - startRef.current); // relative delta to all
     };
     const onChange = () => {
-      onCommit({ [def.k]: parseFloat(el.value) });
+      onCommitDelta(def.k, parseFloat(el.value) - startRef.current);
       setDragging(false);
     };
-    const onDown = () => setDragging(true);
+    el.addEventListener("pointerdown", onDown);
     el.addEventListener("input", onInput);
     el.addEventListener("change", onChange);
-    el.addEventListener("pointerdown", onDown);
     return () => {
+      el.removeEventListener("pointerdown", onDown);
       el.removeEventListener("input", onInput);
       el.removeEventListener("change", onChange);
-      el.removeEventListener("pointerdown", onDown);
     };
-  }, [def, paramsRef, applyInstances, onCommit, setDragging]);
+  }, [def, primaryParamsRef, applyParamDelta, onCommitDelta, setDragging]);
 
   return (
     <label className="ctrl">
@@ -82,14 +90,7 @@ function ContinuousSlider({
           {def.fmt(initial)}
         </span>
       </span>
-      <input
-        ref={inputRef}
-        type="range"
-        min={def.min}
-        max={def.max}
-        step={def.step}
-        defaultValue={initial}
-      />
+      <input ref={inputRef} type="range" min={def.min} max={def.max} step={def.step} defaultValue={initial} />
     </label>
   );
 }
@@ -106,114 +107,136 @@ const SECONDARY_SLIDERS: SliderDef[] = [
 ];
 
 export function Controls({
-  params,
-  paramsRef,
-  applyInstances,
-  onCommit,
+  primary,
+  selectionCount,
+  allSelected,
+  editable,
+  primaryParamsRef,
+  applyParamDelta,
+  onCommitDelta,
+  onCommitAbsolute,
   setDragging,
+  onToggleVisible,
+  onToggleLocked,
 }: ControlsProps) {
-  const sliderProps = { paramsRef, applyInstances, onCommit, setDragging };
+  if (!primary) {
+    return (
+      <div className="controls">
+        <div className="controls-empty">No layer selected.</div>
+      </div>
+    );
+  }
+
+  const status = !primary.visible ? "Hidden" : primary.locked ? "Locked" : null;
+  const title = allSelected
+    ? `All layers (${selectionCount})`
+    : selectionCount > 1
+    ? `${selectionCount} layers`
+    : primary.name;
+  const sliderProps = { primaryParamsRef, applyParamDelta, onCommitDelta, setDragging };
+  const p = primary.params;
+  // The key remounts uncontrolled sliders when the representative changes.
+  const bodyKey = allSelected ? "__all__" : primary.id;
 
   return (
     <div className="controls">
-      {/* Count is STRUCTURAL: it changes the number of <use> nodes, so it goes
-          through React state and a re-render. Discrete and low frequency — it
-          does not need 60fps. PRD §4. */}
-      <label className="ctrl">
-        <span className="ctrl-label">
-          Count<span className="ctrl-val">{params.count}</span>
-        </span>
-        <input
-          type="range"
-          min={1}
-          max={128}
-          step={1}
-          value={params.count}
-          onChange={(e) => onCommit({ count: parseInt(e.target.value, 10) })}
-        />
-      </label>
-
-      {CORE_SLIDERS.map((def) => (
-        <ContinuousSlider key={def.k} def={def} {...sliderProps} />
-      ))}
-
-      <fieldset className="ctrl orientation">
-        <legend>Orientation mode</legend>
-        {(
-          [
-            ["rotateWithCircle", "Rotate with circle"],
-            ["keepUpright", "Keep upright"],
-          ] as [OrientationMode, string][]
-        ).map(([value, label]) => (
-          <label key={value} className="radio">
-            <input
-              type="radio"
-              name="orientationMode"
-              checked={params.orientationMode === value}
-              onChange={() => onCommit({ orientationMode: value })}
-            />
-            {label}
-          </label>
-        ))}
-      </fieldset>
-
-      <label className="radio">
-        <input
-          type="checkbox"
-          checked={params.mirrorAlternates}
-          onChange={(e) => onCommit({ mirrorAlternates: e.target.checked })}
-        />
-        Mirror alternates
-      </label>
-
-      {/* Seam handling. All of these are structural (z-order / clip geometry), so
-          like Count they commit immediately through React — low frequency, no
-          need for the uncontrolled-slider treatment. The seam is conserved:
-          "Seam position" relocates it, "Tuck" hides it. */}
-      <fieldset className="ctrl seam">
-        <legend>Seam</legend>
-        <label className="ctrl">
-          <span className="ctrl-label">
-            Seam position<span className="ctrl-val">{params.paintOffset}</span>
+      <div className="controls-head">
+        <div className="editing-row">
+          <span className="editing-label">Editing</span>
+          <span className="editing-name" title={title}>
+            {title}
           </span>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(0, params.count - 1)}
-            step={1}
-            value={Math.min(params.paintOffset, Math.max(0, params.count - 1))}
-            onChange={(e) => onCommit({ paintOffset: parseInt(e.target.value, 10) })}
-          />
-        </label>
-        <label className="radio">
-          <input
-            type="checkbox"
-            checked={params.tuck}
-            onChange={(e) => onCommit({ tuck: e.target.checked })}
-          />
-          Tuck final repeat
-        </label>
+        </div>
+        <div className="editing-toggles">
+          <button className="mini" onClick={onToggleVisible} title="Toggle visibility">
+            {primary.visible ? "👁" : "🙈"}
+          </button>
+          <button className="mini" onClick={onToggleLocked} title="Toggle lock">
+            {primary.locked ? "🔒" : "🔓"}
+          </button>
+          {status && <span className="editing-status">{status}</span>}
+          {selectionCount > 1 && <span className="editing-status sync">sync</span>}
+        </div>
+      </div>
+
+      <fieldset className="controls-body" disabled={!editable} key={bodyKey}>
         <label className="ctrl">
           <span className="ctrl-label">
-            Seam blend (k)<span className="ctrl-val">{params.seamBlend}</span>
+            Count<span className="ctrl-val">{p.count}</span>
           </span>
           <input
             type="range"
             min={1}
-            max={6}
+            max={128}
             step={1}
-            value={params.seamBlend}
-            disabled={!params.tuck}
-            onChange={(e) => onCommit({ seamBlend: parseInt(e.target.value, 10) })}
+            value={p.count}
+            onChange={(e) => onCommitAbsolute({ count: parseInt(e.target.value, 10) })}
           />
         </label>
-      </fieldset>
 
-      <hr />
-      <div className="secondary-note">Secondary</div>
-      {SECONDARY_SLIDERS.map((def) => (
-        <ContinuousSlider key={def.k} def={def} {...sliderProps} />
-      ))}
+        {CORE_SLIDERS.map((def) => (
+          <ContinuousSlider key={def.k} def={def} {...sliderProps} />
+        ))}
+
+        <fieldset className="ctrl orientation">
+          <legend>Orientation mode</legend>
+          {(
+            [
+              ["rotateWithCircle", "Rotate with circle"],
+              ["keepUpright", "Keep upright"],
+            ] as [OrientationMode, string][]
+          ).map(([value, label]) => (
+            <label key={value} className="radio">
+              <input
+                type="radio"
+                name="orientationMode"
+                checked={p.orientationMode === value}
+                onChange={() => onCommitAbsolute({ orientationMode: value })}
+              />
+              {label}
+            </label>
+          ))}
+        </fieldset>
+
+        <label className="radio">
+          <input
+            type="checkbox"
+            checked={p.mirrorAlternates}
+            onChange={(e) => onCommitAbsolute({ mirrorAlternates: e.target.checked })}
+          />
+          Mirror alternates
+        </label>
+
+        <fieldset className="ctrl seam">
+          <legend>Seam</legend>
+          <label className="radio">
+            <input type="checkbox" checked={p.tuck} onChange={(e) => onCommitAbsolute({ tuck: e.target.checked })} />
+            Hide seam (automatic)
+          </label>
+          {/* Only knob: where the hidden split sits. Depth is no longer a thing —
+              the two-half-disk render is seamless at any overlap. */}
+          <label className="ctrl">
+            <span className="ctrl-label">
+              Seam position<span className="ctrl-val">{p.paintOffset}</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, p.count - 1)}
+              step={1}
+              value={Math.min(p.paintOffset, Math.max(0, p.count - 1))}
+              disabled={!p.tuck}
+              onChange={(e) => onCommitAbsolute({ paintOffset: parseInt(e.target.value, 10) })}
+            />
+          </label>
+        </fieldset>
+
+        <hr />
+        <div className="secondary-note">Secondary</div>
+        {SECONDARY_SLIDERS.map((def) => (
+          <ContinuousSlider key={def.k} def={def} {...sliderProps} />
+        ))}
+      </fieldset>
     </div>
   );
 }
