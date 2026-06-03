@@ -13,6 +13,7 @@ import { Controls } from "./controls/Controls";
 import { LayersPanel, type MoveDir } from "./layers/LayersPanel";
 import { DEFAULT_MOTIF_SVG } from "./defaultMotif";
 import { importSvgFromFile, importSvgFromText } from "./motif/importSvg";
+import { boxCenter, DEFAULT_PENCIL, strokeToFilledPath, unionBox, type PencilSettings } from "./motif/drawnPath";
 import {
   buildAnimatedExportSvg,
   buildExportSvg,
@@ -92,6 +93,13 @@ const DEFAULT_PARAMS: RepeatParams = {
   seamBlend: 2, // tuck depth: how many copies a petal laps. Small + explicit.
 };
 
+// A drawn shape starts as a single, un-repeated instance sitting where it was
+// drawn (count 1, radius 0). "Create Radial Repeat" turns it into a repeat. PRD §15A.
+// tuck stays ON (like imported layers) so raising the count via the slider —
+// not just the radialize button — hides the wrap seam. (At count 1 the two-half
+// render just draws the single shape, so it's harmless.)
+const DRAWN_PARAMS: RepeatParams = { ...DEFAULT_PARAMS, count: 1, radiusOffset: 0 };
+
 const HISTORY_LIMIT = 100;
 
 function resolveAction<T>(action: StateAction<T>, prev: T): T {
@@ -125,7 +133,13 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [drawingMotionPath, setDrawingMotionPath] = useState(false);
   const [animationPlaying, setAnimationPlaying] = useState(false);
+  const [tool, setTool] = useState<"select" | "pencil">("select");
+  const [pencil, setPencil] = useState<PencilSettings>(DEFAULT_PENCIL);
   const newLayerCount = useRef(1);
+  const drawnCount = useRef(0);
+  // The drawn layer that pencil strokes currently append to (multi-stroke shape).
+  // Reset by "New Shape", switching tools, or radializing. PRD §8 (multi-line).
+  const currentDrawingRef = useRef<string | null>(null);
 
   const scene = useScene();
   const { viewport, setViewport, onWheel, panBy } = useViewport({ tx: 0, ty: 0, s: 1 });
@@ -207,8 +221,8 @@ export default function App() {
   const editableIdsRef = useRef<Set<string>>(new Set());
   editableIdsRef.current = new Set(editableSelected.map((l) => l.id));
 
-  const docRef = useRef({ layers, groups, selectedIds, primaryId, dragging });
-  docRef.current = { layers, groups, selectedIds, primaryId, dragging };
+  const docRef = useRef({ layers, groups, selectedIds, primaryId, dragging, tool });
+  docRef.current = { layers, groups, selectedIds, primaryId, dragging, tool };
 
   const commitDocument = (update: (doc: DocumentState) => DocumentState) => {
     setHistory((h) => {
@@ -525,6 +539,88 @@ export default function App() {
     newLayerCount.current += 1;
     addLayerFromMotif(motif, `Radial Repeat ${newLayerCount.current}`);
   }
+
+  // Pencil commit: a finished stroke becomes a filled path. The first stroke
+  // creates a plain single-instance drawn layer (no repeat yet); subsequent
+  // strokes APPEND to it so you can compose a shape from several lines. PRD §8,§15A.
+  function onDrawCommit(points: Center[]) {
+    const sp = strokeToFilledPath(points, pencil.size / viewport.s, pencil.smoothing, pencil.fillColor);
+    if (!sp) return; // tiny stroke / stray click — silently ignored. PRD §18.
+
+    const curId = currentDrawingRef.current;
+    const cur = curId ? docRef.current.layers.find((l) => l.id === curId) : null;
+    if (cur) {
+      const box = unionBox(cur.motif.box, sp.box);
+      const c = boxCenter(box);
+      updateLayers((ls) =>
+        ls.map((l) =>
+          l.id === curId
+            ? {
+                ...l,
+                // append the new path; re-anchor + re-center on the union bbox so
+                // every stroke stays where it was drawn. PRD §13.
+                motif: {
+                  ...l.motif,
+                  innerHtml: l.motif.innerHtml + sp.pathHtml,
+                  box,
+                  anchorX: c.x,
+                  anchorY: c.y,
+                  weight: l.motif.weight + 1,
+                },
+                center: c,
+                updatedAt: Date.now(),
+              }
+            : l
+        )
+      );
+      return;
+    }
+
+    drawnCount.current += 1;
+    const c = boxCenter(sp.box);
+    const layer = createLayer({
+      name: `Drawn Shape ${drawnCount.current}`,
+      motif: { innerHtml: sp.pathHtml, anchorX: c.x, anchorY: c.y, box: sp.box, weight: 1, simplified: false },
+      params: DRAWN_PARAMS,
+      center: c,
+    });
+    currentDrawingRef.current = layer.id;
+    commitDocument((doc) => ({ ...doc, layers: [...doc.layers, layer], selectedIds: [layer.id] }));
+  }
+
+  /** End the current drawing so the next stroke starts a fresh shape. */
+  function finishDrawing() {
+    currentDrawingRef.current = null;
+  }
+  /** Switch tools, always ending any in-progress drawing. */
+  function switchTool(next: "select" | "pencil") {
+    currentDrawingRef.current = null;
+    setTool(next);
+  }
+
+  // "Create Radial Repeat": turn a single-instance layer (e.g. a fresh drawing)
+  // into a repeat using the default count/radius. PRD §15A.
+  const canRadialize = !!primary && primary.params.count === 1;
+  function radializePrimary() {
+    if (!primaryId) return;
+    finishDrawing();
+    updateLayers((ls) =>
+      ls.map((l) =>
+        l.id === primaryId
+          ? {
+              ...l,
+              params: {
+                ...l.params,
+                count: DEFAULT_PARAMS.count,
+                radiusOffset: DEFAULT_PARAMS.radiusOffset,
+                tuck: DEFAULT_PARAMS.tuck,
+              },
+              updatedAt: Date.now(),
+            }
+          : l
+      )
+    );
+  }
   function onDuplicate(id: string) {
     commitDocument((doc) => {
       const original = doc.layers.find((l) => l.id === id);
@@ -634,6 +730,11 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
 
       if (typing) return;
+      if (e.key === "Escape" && docRef.current.tool === "pencil") {
+        currentDrawingRef.current = null;
+        setTool("select");
+        return;
+      }
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) redo();
@@ -718,6 +819,16 @@ export default function App() {
         >
           Animate Center
         </button>
+        <button
+          className={tool === "pencil" ? "active" : ""}
+          onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")}
+          title="Pencil — draw a filled shape (Esc to exit)"
+        >
+          Pencil
+        </button>
+        <button onClick={radializePrimary} disabled={!canRadialize} title="Turn the selected shape into a radial repeat">
+          Create Radial Repeat
+        </button>
         <button onClick={onNewLayer}>New Layer</button>
         <button
           className={allSelected ? "active" : ""}
@@ -773,6 +884,36 @@ export default function App() {
             if (f) loadFile(f);
           }}
         >
+          {tool === "pencil" && (
+            <div className="pencil-panel">
+              <strong>Pencil</strong>
+              <label>
+                Size<span>{pencil.size}</span>
+                <input
+                  type="range" min={2} max={80} step={1} value={pencil.size}
+                  onChange={(e) => setPencil((p) => ({ ...p, size: parseInt(e.target.value, 10) }))}
+                />
+              </label>
+              <label>
+                Smoothing<span>{pencil.smoothing}</span>
+                <input
+                  type="range" min={0} max={100} step={1} value={pencil.smoothing}
+                  onChange={(e) => setPencil((p) => ({ ...p, smoothing: parseInt(e.target.value, 10) }))}
+                />
+              </label>
+              <label className="pencil-fill">
+                Fill
+                <input
+                  type="color" value={pencil.fillColor}
+                  onChange={(e) => setPencil((p) => ({ ...p, fillColor: e.target.value }))}
+                />
+              </label>
+              <div className="pencil-actions">
+                <button className="mini" onClick={finishDrawing} title="Start a separate shape">New Shape</button>
+                <button className="mini" onClick={() => switchTool("select")}>Done</button>
+              </div>
+            </div>
+          )}
           <Canvas
             layers={layers}
             selectedIds={selectedSet}
@@ -780,7 +921,10 @@ export default function App() {
             motionCss={motionCss}
             motionPath={primaryMotionPath}
             drawingMotionPath={drawingMotionPath}
-            animationsMoving={animationPlaying && !dragging}
+            animationsMoving={animationPlaying && !dragging && tool !== "pencil"}
+            tool={tool}
+            pencil={pencil}
+            onDrawCommit={onDrawCommit}
             viewport={viewport}
             dragging={dragging}
             scene={scene}

@@ -42,6 +42,9 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       motionPath={null}
       drawingMotionPath={false}
       animationsMoving={false}
+      tool="select"
+      pencil={{ size: 18, smoothing: 55, fillColor: "#7c93ff" }}
+      onDrawCommit={() => {}}
       viewport={{ tx: 0, ty: 0, s: 1 }}
       dragging={false}
       scene={scene}

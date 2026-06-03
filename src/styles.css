@@ -96,6 +96,84 @@ body {
 .layers-root .layer {
   cursor: move;
 }
+/* pencil tool: crosshair, and drawing takes precedence over the move cursor */
+.canvas.pencil,
+.canvas.pencil .layers-root .layer {
+  cursor: crosshair;
+}
+.pencil-preview {
+  opacity: 0.85;
+}
+/* pencil start anchor (shown while drawing); highlights when ready to snap closed */
+.pencil-anchor {
+  fill: #fff;
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  transition: none;
+}
+.pencil-anchor.snapping {
+  fill: var(--accent);
+}
+
+/* floating pencil settings panel */
+.pencil-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  width: 180px;
+}
+.pencil-panel strong {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.pencil-panel label {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 2px 8px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.pencil-panel label span {
+  justify-self: end;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pencil-panel input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--accent);
+}
+.pencil-panel .pencil-fill {
+  grid-template-columns: 1fr auto;
+}
+.pencil-panel .pencil-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.pencil-panel .pencil-actions .mini {
+  border: 1px solid var(--line);
+}
+.pencil-panel .pencil-fill input {
+  width: 32px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: none;
+}
 
 /* selection gizmo. non-scaling-stroke keeps outlines a constant screen width
    regardless of zoom, while geometry scales with content. */

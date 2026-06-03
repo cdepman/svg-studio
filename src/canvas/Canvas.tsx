@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { GIZMO_DUP_GAP, GIZMO_HANDLE, isHeavy } from "../config";
 import { LayerArt } from "./LayerArt";
+import { pencilPreviewPath, type PencilSettings } from "../motif/drawnPath";
 import type { Scene } from "./useScene";
 import type { GBounds } from "./selectionBounds";
 import type { WorldRect } from "../App";
@@ -29,6 +30,11 @@ interface CanvasProps {
   motionPath: { start: Center; end: Center; closed: boolean } | null;
   drawingMotionPath: boolean;
   animationsMoving: boolean;
+  /** Active tool. "pencil" replaces select/marquee on the canvas with drawing. */
+  tool: "select" | "pencil";
+  pencil: PencilSettings;
+  /** Finalize a pencil stroke (raw world points) into a drawn layer. */
+  onDrawCommit: (points: Center[]) => void;
   viewport: Viewport;
   dragging: boolean;
   scene: Scene;
@@ -54,6 +60,9 @@ export function Canvas({
   motionPath,
   drawingMotionPath,
   animationsMoving,
+  tool,
+  pencil,
+  onDrawCommit,
   viewport,
   dragging,
   scene,
@@ -79,8 +88,15 @@ export function Canvas({
   const motionEndRef = useRef<SVGCircleElement>(null);
   // Marquee selection. Mode is tracked on a ref (per-frame), rect in state so
   // the dashed box renders; LayerArt is memoized so this re-render is cheap.
-  const mode = useRef<"pan" | "marquee" | "motion-path" | null>(null);
+  const mode = useRef<"pan" | "marquee" | "motion-path" | "draw" | null>(null);
   const marqueeStart = useRef<Center>({ x: 0, y: 0 });
+  // Pencil: collect world points; preview path is mutated imperatively via rAF.
+  // No React state is written until the stroke is committed on pointerup. PRD §9.
+  const drawPts = useRef<Center[]>([]);
+  const drawStart = useRef<Center>({ x: 0, y: 0 });
+  const drawQueued = useRef(false);
+  const pencilPreviewRef = useRef<SVGPathElement>(null);
+  const pencilAnchorRef = useRef<SVGCircleElement>(null);
   const motionDrag = useRef({
     handle: "end" as "start" | "end",
     pending: null as PointerEvent | null,
@@ -157,6 +173,64 @@ export function Canvas({
     window.addEventListener("pointerup", motionUp);
   };
 
+  // --- Pencil drawing (PRD §8–10) ---
+  const SNAP_PX = 16;
+  const nearStart = (p: Center) =>
+    drawPts.current.length > 8 &&
+    Math.hypot(p.x - drawStart.current.x, p.y - drawStart.current.y) < SNAP_PX * inv;
+
+  const updateDrawPreview = () => {
+    drawQueued.current = false;
+    const pts = drawPts.current;
+    const last = pts[pts.length - 1];
+    const snapping = !!last && nearStart(last);
+    // When the pen returns near the start, preview the closed loop exactly.
+    const previewPts = snapping ? [...pts, drawStart.current] : pts;
+    pencilPreviewRef.current?.setAttribute(
+      "d",
+      pencilPreviewPath(previewPts, pencil.size * inv, pencil.smoothing)
+    );
+    pencilAnchorRef.current?.classList.toggle("snapping", snapping);
+  };
+  const scheduleDraw = () => {
+    if (!drawQueued.current) {
+      drawQueued.current = true;
+      requestAnimationFrame(updateDrawPreview);
+    }
+  };
+  const showAnchor = (p: Center) => {
+    const a = pencilAnchorRef.current;
+    if (!a) return;
+    a.setAttribute("cx", String(p.x));
+    a.setAttribute("cy", String(p.y));
+    a.setAttribute("r", String(6 * inv));
+    a.style.opacity = "1";
+    a.classList.remove("snapping");
+  };
+  const hideAnchor = () => {
+    const a = pencilAnchorRef.current;
+    if (a) {
+      a.style.opacity = "0";
+      a.classList.remove("snapping");
+    }
+  };
+  const beginDraw = (e: React.PointerEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    mode.current = "draw";
+    const start = scene.screenToWorld(e.clientX, e.clientY);
+    drawStart.current = start;
+    drawPts.current = [start];
+    const el = pencilPreviewRef.current;
+    if (el) {
+      el.setAttribute("fill", pencil.fillColor);
+      el.setAttribute("stroke", pencil.fillColor);
+      el.setAttribute("stroke-width", String(pencil.size * inv));
+      el.setAttribute("d", "");
+    }
+    showAnchor(start);
+  };
+
   const onSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     const wantPan = e.button === 1 || (e.button === 0 && spaceHeld.current);
     if (wantPan) {
@@ -170,6 +244,12 @@ export function Canvas({
     // The gizmo (resize handles + selection menu) owns its own pointerdowns.
     if ((e.target as Element).closest?.(".gizmo, .motion-path-ui")) return;
     setActionMenuOpen(false);
+
+    // Pencil tool: draw instead of select/marquee. PRD §8.
+    if (tool === "pencil") {
+      beginDraw(e);
+      return;
+    }
 
     if (drawingMotionPath && motionPath) {
       beginMotionDrag(e);
@@ -201,9 +281,31 @@ export function Canvas({
       panState.current.lastY = e.clientY;
     } else if (mode.current === "marquee") {
       setMarquee(normRect(marqueeStart.current, scene.screenToWorld(e.clientX, e.clientY)));
+    } else if (mode.current === "draw") {
+      const p = scene.screenToWorld(e.clientX, e.clientY);
+      const pts = drawPts.current;
+      const last = pts[pts.length - 1];
+      // Throttle by a minimum (≈1.5 screen px) so huge strokes stay bounded. PRD §18.
+      if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= 1.5 * inv) {
+        pts.push(p);
+        scheduleDraw();
+      }
     }
   };
   const onSvgPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (mode.current === "draw") {
+      const pts = drawPts.current;
+      const end = scene.screenToWorld(e.clientX, e.clientY);
+      // Snap closed: if the pen ended near the start anchor, return the path to
+      // the start so the loop joins cleanly. PRD (start/end anchor join).
+      if (nearStart(end)) pts.push(drawStart.current);
+      drawPts.current = [];
+      pencilPreviewRef.current?.setAttribute("d", "");
+      hideAnchor();
+      mode.current = null;
+      onDrawCommit(pts);
+      return;
+    }
     if (mode.current === "marquee") {
       const rect = normRect(marqueeStart.current, scene.screenToWorld(e.clientX, e.clientY));
       onMarqueeSelect(rect, e.shiftKey);
@@ -214,6 +316,11 @@ export function Canvas({
   };
   const endPan = () => {
     if (mode.current === "marquee") setMarquee(null);
+    if (mode.current === "draw") {
+      drawPts.current = [];
+      pencilPreviewRef.current?.setAttribute("d", "");
+      hideAnchor();
+    }
     mode.current = null;
     panState.current.active = false;
   };
@@ -221,7 +328,7 @@ export function Canvas({
   return (
     <svg
       ref={scene.svgRef}
-      className="canvas"
+      className={tool === "pencil" ? "canvas pencil" : "canvas"}
       onWheel={onWheel}
       onPointerDown={onSvgPointerDown}
       onPointerMove={onSvgPointerMove}
@@ -243,6 +350,23 @@ export function Canvas({
               />
             ))}
         </g>
+
+        {/* Live pencil preview (imperative; not part of committed state). PRD §10. */}
+        {tool === "pencil" && (
+          <>
+            <path
+              ref={pencilPreviewRef}
+              className="pencil-preview"
+              fill={pencil.fillColor}
+              stroke={pencil.fillColor}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              style={{ pointerEvents: "none" }}
+            />
+            {/* Start anchor; grows/highlights when the pen returns to snap closed. */}
+            <circle ref={pencilAnchorRef} className="pencil-anchor" r={0} style={{ opacity: 0, pointerEvents: "none" }} />
+          </>
+        )}
 
         <g className="selection-ui">
           {marquee && (

@@ -68,6 +68,27 @@ mutates each selected layer's `repeat-root` + box transform directly (one
 `setAttribute` per moved node per frame), with zero React commits on
 `pointermove`. The combined handle sits at the centroid of the selected centers.
 
+## Pencil tool (draw → radialize)
+
+Click **Pencil** (Esc to exit), draw — each stroke's centerline is smoothed (via
+`perfect-freehand`'s `getStrokePoints`), **closed, and filled** (the region you
+draw is filled, not just the pen ribbon). A **start anchor** appears as you draw;
+bring the pen back near it and release to **snap the loop closed** cleanly.
+Strokes **accumulate into one drawn layer**
+(draw several lines to compose a shape; "New Shape" starts a fresh one). The
+drawn layer is a plain single-instance layer; click **Create Radial Repeat** to
+turn it into a radial repeat. Tune **Size**, **Smoothing** (0–100), and **Fill**
+in the floating panel.
+
+A drawn shape is **not a special case**: `motif/drawnPath.ts` turns the stroke
+into a `Motif` — a `<path fill="…" stroke="none">` anchored at its bbox center —
+which is the exact same source abstraction imported SVGs use. So radial repeat,
+duplicate, reorder, hide/lock, resize, animate, and export all treat drawn shapes
+identically (PRD §5/§14). Drawing is fully imperative (world points collected via
+the shared `screenToWorld`, preview path mutated on rAF); **zero React commits
+until `pointerup`**, then one commit creates the layer (PRD §9). Fill is a literal
+value baked onto the path — no `currentColor` (PRD §12).
+
 ## Seam handling
 
 Copies paint `0..N-1` and later = on top, so the overlap is consistent the whole

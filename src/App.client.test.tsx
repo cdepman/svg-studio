@@ -289,4 +289,49 @@ describe("App layer interactions", () => {
     expect(scales).toContain("scale(1)"); // original untouched
     expect(scales).toContain("scale(2.5)"); // copy resized
   });
+
+  const pe = (type: string, x: number, y: number) =>
+    new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
+  const drawStroke = (a: [number, number], b: [number, number], c: [number, number], d: [number, number]) => {
+    const svg = canvas();
+    act(() => svg.dispatchEvent(pe("pointerdown", a[0], a[1])));
+    act(() => {
+      svg.dispatchEvent(pe("pointermove", b[0], b[1]));
+      svg.dispatchEvent(pe("pointermove", c[0], c[1]));
+      svg.dispatchEvent(pe("pointermove", d[0], d[1]));
+    });
+    act(() => svg.dispatchEvent(pe("pointerup", d[0], d[1])));
+  };
+  const instancesIn = (layerIndex: number) =>
+    canvas().querySelectorAll(`[data-layer-id]`)[layerIndex]?.querySelectorAll("use.instance:not(.alt)").length;
+
+  it("Pencil draws a single-instance drawn layer; extra strokes append to it", () => {
+    click(button("Pencil"));
+    drawStroke([200, 200], [260, 210], [300, 260], [210, 300]);
+    expect(rows()).toHaveLength(2); // default + one drawn layer
+    expect(container.textContent).toContain("Drawn Shape 1");
+    expect(rows()[0].textContent).toContain("Drawn Shape 1"); // selected, front
+    expect(rows()[0].className).toContain("selected");
+
+    // a drawn layer is NOT auto-repeated: a single instance, and a filled path
+    const drawnG = canvas().querySelector('.layer[data-layer-id]:last-of-type')!;
+    expect(drawnG.querySelectorAll("use.instance:not(.alt)")).toHaveLength(1);
+    expect(canvas().querySelector('.layer path[fill]')).not.toBeNull();
+
+    // a second stroke appends to the SAME layer (no new layer)
+    drawStroke([400, 400], [460, 410], [500, 460], [410, 500]);
+    expect(rows()).toHaveLength(2);
+    expect(drawnG.querySelectorAll("path").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("Create Radial Repeat turns the selected drawn shape into a repeat", () => {
+    click(button("Pencil"));
+    drawStroke([200, 200], [260, 210], [300, 260], [210, 300]);
+    click(button("Done"));
+    // single instance before
+    expect(instancesIn(1)).toBe(1);
+    click(button("Create Radial Repeat"));
+    // now many instances (default count)
+    expect(instancesIn(1)!).toBeGreaterThan(1);
+  });
 });
