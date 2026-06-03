@@ -50,6 +50,10 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       onMotionPathCommit={() => {}}
       onResizePointerDown={() => {}}
       onDuplicateSelected={() => {}}
+      onGroupSelection={() => {}}
+      onUngroupSelection={() => {}}
+      canGroupSelection={selected.size >= 2}
+      canUngroupSelection={false}
       onWheel={() => {}}
       panBy={() => {}}
     />
@@ -65,12 +69,12 @@ describe("Canvas layer stack + selection gizmo", () => {
     expect(html).not.toContain('data-layer-id="b"');
   });
 
-  it("draws the gizmo (frame + handles + dup) for an editable selection", () => {
+  it("draws the gizmo (frame + handles + action menu) for an editable selection", () => {
     const a = layer({ id: "a" });
     const html = renderToString(<Host layers={[a]} selected={new Set(["a"])} />);
     expect(html).toContain("gizmo-frame");
     expect((html.match(/gizmo-handle/g) ?? []).length).toBe(4);
-    expect(html).toContain("gizmo-dup");
+    expect(html).toContain("gizmo-action-menu");
   });
 
   it("draws no gizmo for a selected locked layer (art still shows)", () => {

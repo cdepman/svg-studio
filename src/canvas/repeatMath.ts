@@ -87,17 +87,6 @@ export function paintOrder(count: number, paintOffset: number): number[] {
   return out;
 }
 
-/** The first `seamBlend` painted copies — the ones redrawn (tucked) over the
- *  last-painted copies inside the wedge. Clamped to [1, count]. */
-export function tuckIndices(
-  count: number,
-  paintOffset: number,
-  seamBlend: number
-): number[] {
-  const k = clamp(Math.round(seamBlend), 1, count);
-  return paintOrder(count, paintOffset).slice(0, k);
-}
-
 /** Largest |scale| across copies — used to size the wedge so it covers every
  *  (possibly scaled) petal. */
 export function maxAbsScale(p: RepeatParams): number {
@@ -152,13 +141,13 @@ export interface SeamHalves {
  *
  * Depends only on params + box, never the center.
  */
-export function seamHalves(p: RepeatParams, box: Box): SeamHalves {
+export function seamHalves(p: RepeatParams, box: Box, extraReach = 0): SeamHalves {
   const step = angleStep(p.count);
   const F = ((Math.round(p.paintOffset) % p.count) + p.count) % p.count;
   // The fault line is the gap between the last- and first-painted copy.
   const seamAngle = p.angleOffset + F * step - step / 2;
   const half = Math.round(p.count / 2);
-  const reach = boundsReach(p, box) + 8;
+  const reach = boundsReach(p, box) + Math.max(0, extraReach) + 8;
 
   return {
     oppHalfD: sectorPath(seamAngle + 90, seamAngle + 270, reach),

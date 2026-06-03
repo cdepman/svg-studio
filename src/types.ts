@@ -83,6 +83,14 @@ export interface CenterPathAnimation {
 
 export type LayerAnimation = CenterPathAnimation;
 
+export interface LayerGroup {
+  id: string;
+  name: string;
+  layerIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 /**
  * A flat layer: one radial-repeat composition. No nesting, no folders. PRD §4.
  * `center` is kept off RepeatParams on purpose so the repeat math stays

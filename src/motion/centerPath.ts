@@ -73,18 +73,26 @@ export function instanceMotionVectorForGeometry(
   params: RepeatParams,
   scale: number,
   raw: LayerAnimation | undefined,
-  fallbackStart: Center,
+  referencePoint: Center,
   index: number
 ) {
   if (!raw || raw.type !== "centerPath") return null;
   const animation = normalizedAnimation(raw);
-  const { start, end } = animationPoints(animation, fallbackStart);
+  const { start, end } = animationPoints(animation, referencePoint);
+  const refStart = { x: start.x - referencePoint.x, y: start.y - referencePoint.y };
+  const refEnd = { x: end.x - referencePoint.x, y: end.y - referencePoint.y };
   const refDelta = { x: end.x - start.x, y: end.y - start.y };
+  const worldStart = rotate(refStart, index * angleStep(params.count));
+  const worldEnd = rotate(refEnd, index * angleStep(params.count));
   const worldDelta = rotate(refDelta, index * angleStep(params.count));
   const safeScale = scale || 1;
   return {
-    dx: worldDelta.x / safeScale,
-    dy: worldDelta.y / safeScale,
+    startDx: worldStart.x / safeScale,
+    startDy: worldStart.y / safeScale,
+    endDx: worldEnd.x / safeScale,
+    endDy: worldEnd.y / safeScale,
+    dx: worldEnd.x / safeScale,
+    dy: worldEnd.y / safeScale,
     angle: Math.atan2(worldDelta.y, worldDelta.x) * (180 / Math.PI),
   };
 }
@@ -99,11 +107,30 @@ export function instanceMotionVector(layer: Layer, index: number) {
   );
 }
 
+export function animationReachPadding(layer: Layer) {
+  const raw = layer.animation;
+  if (!raw || raw.type !== "centerPath" || !raw.enabled) return 0;
+  const referencePoint = referenceInstancePoint(layer);
+  const animation = normalizedAnimation(raw);
+  const { start, end } = animationPoints(animation, referencePoint);
+  const safeScale = Math.abs(layer.scale) || 1;
+  return (
+    Math.max(
+      Math.hypot(start.x - referencePoint.x, start.y - referencePoint.y),
+      Math.hypot(end.x - referencePoint.x, end.y - referencePoint.y)
+    ) / safeScale
+  );
+}
+
 export function instanceMotionStyle(layer: Layer, index: number): CSSProperties | undefined {
   if (!layer.animation?.enabled) return undefined;
   const v = instanceMotionVector(layer, index);
   if (!v) return undefined;
   return {
+    "--motion-start-dx": `${v.startDx}px`,
+    "--motion-start-dy": `${v.startDy}px`,
+    "--motion-end-dx": `${v.endDx}px`,
+    "--motion-end-dy": `${v.endDy}px`,
     "--motion-dx": `${v.dx}px`,
     "--motion-dy": `${v.dy}px`,
     "--motion-angle": `${v.angle}deg`,
@@ -114,7 +141,7 @@ export function instanceMotionStyleText(layer: Layer, index: number) {
   if (!layer.animation?.enabled) return "";
   const v = instanceMotionVector(layer, index);
   if (!v) return "";
-  return ` style="--motion-dx:${v.dx}px;--motion-dy:${v.dy}px;--motion-angle:${v.angle}deg"`;
+  return ` style="--motion-start-dx:${v.startDx}px;--motion-start-dy:${v.startDy}px;--motion-end-dx:${v.endDx}px;--motion-end-dy:${v.endDy}px;--motion-dx:${v.dx}px;--motion-dy:${v.dy}px;--motion-angle:${v.angle}deg"`;
 }
 
 export function motionPathD(animation: CenterPathAnimation, layerCenter: Center) {
@@ -146,22 +173,22 @@ export function centerPathCss(layer: Layer, playing: boolean) {
   const rotateKeyframes = `${klass}-rotate-keyframes`;
   const follow = animation.orientationMode === "followPath";
   const middle = animation.closed || animation.path.closed
-    ? `  50% { transform: translate(var(--motion-dx), var(--motion-dy)); }
-  100% { transform: translate(0, 0); }`
-    : `  to { transform: translate(var(--motion-dx), var(--motion-dy)); }`;
+    ? `  50% { transform: translate(var(--motion-end-dx), var(--motion-end-dy)); }
+  100% { transform: translate(var(--motion-start-dx), var(--motion-start-dy)); }`
+    : `  to { transform: translate(var(--motion-end-dx), var(--motion-end-dy)); }`;
   const rotateMiddle = animation.closed || animation.path.closed
     ? `  50% { transform: rotate(var(--motion-angle)); }
   100% { transform: rotate(0deg); }`
     : `  to { transform: rotate(var(--motion-angle)); }`;
   return `
 .${klass} {
-  transform: translate(0, 0);
+  transform: translate(var(--motion-start-dx), var(--motion-start-dy));
   animation: ${keyframes} ${animation.durationSeconds}s ${animation.easing} ${animation.delaySeconds}s infinite;
   animation-direction: ${directionForCss(animation)};
   animation-play-state: ${playing ? "running" : "paused"};
 }
 @keyframes ${keyframes} {
-  from { transform: translate(0, 0); }
+  from { transform: translate(var(--motion-start-dx), var(--motion-start-dy)); }
 ${middle}
 }${
     follow

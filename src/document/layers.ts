@@ -3,12 +3,18 @@
 // Rendering order: layers[0] = back/bottom, layers[N-1] = front/top.
 // The panel renders this reversed (top row = front). Keep this module pure and
 // unit-tested; it is the source of truth for ordering correctness.
-import type { Center, Layer, LayerAnimation, Motif, RepeatParams } from "../types";
+import type { Center, Layer, LayerAnimation, LayerGroup, Motif, RepeatParams } from "../types";
 
 let idCounter = 0;
 export function newLayerId(): string {
   idCounter += 1;
   return `layer-${Date.now().toString(36)}-${idCounter}`;
+}
+
+let groupIdCounter = 0;
+export function newGroupId(): string {
+  groupIdCounter += 1;
+  return `group-${Date.now().toString(36)}-${groupIdCounter}`;
 }
 
 export function createLayer(opts: {
@@ -85,6 +91,44 @@ export function duplicateLayers(
     }
   }
   return { layers: out, newIds };
+}
+
+export function createLayerGroup(
+  layers: Layer[],
+  groups: LayerGroup[],
+  ids: Set<string>,
+  name = `Group ${groups.length + 1}`
+): { groups: LayerGroup[]; group: LayerGroup | null } {
+  const layerIds = layers.map((l) => l.id).filter((id) => ids.has(id));
+  if (layerIds.length < 2) return { groups, group: null };
+  const idSet = new Set(layerIds);
+  const now = Date.now();
+  const group: LayerGroup = {
+    id: newGroupId(),
+    name,
+    layerIds,
+    createdAt: now,
+    updatedAt: now,
+  };
+  return {
+    groups: [...groups.filter((g) => !g.layerIds.some((id) => idSet.has(id))), group],
+    group,
+  };
+}
+
+export function removeGroupsForLayerIds(groups: LayerGroup[], ids: Set<string>): LayerGroup[] {
+  return groups.filter((g) => !g.layerIds.some((id) => ids.has(id)));
+}
+
+export function pruneGroups(groups: LayerGroup[], layers: Layer[]): LayerGroup[] {
+  const existing = new Set(layers.map((l) => l.id));
+  return groups
+    .map((g) => ({ ...g, layerIds: g.layerIds.filter((id) => existing.has(id)) }))
+    .filter((g) => g.layerIds.length >= 2);
+}
+
+export function groupForLayer(groups: LayerGroup[], layerId: string): LayerGroup | undefined {
+  return groups.find((g) => g.layerIds.includes(layerId));
 }
 
 const indexOfId = (layers: Layer[], id: string) =>

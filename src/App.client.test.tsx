@@ -99,6 +99,24 @@ describe("App layer interactions", () => {
     expect(selected).toHaveLength(2);
   });
 
+  it("groups selected layers with the keyboard shortcut and selects grouped layers together", () => {
+    click(button("New Layer"));
+    click(button("Select All"));
+    keydown("g", { metaKey: true });
+
+    expect(container.querySelectorAll(".group-row")).toHaveLength(1);
+    expect(container.querySelectorAll(".child-row")).toHaveLength(2);
+
+    keydown("Escape");
+    expect(Array.from(rows()).filter((r) => r.className.includes("selected"))).toHaveLength(1);
+
+    click(rows()[0]);
+    expect(Array.from(rows()).filter((r) => r.className.includes("selected"))).toHaveLength(2);
+
+    keydown("g", { metaKey: true, shiftKey: true });
+    expect(container.querySelectorAll(".group-row")).toHaveLength(0);
+  });
+
   it("Undo and Redo buttons revert and restore document edits", () => {
     expect((button("Undo") as HTMLButtonElement).disabled).toBe(true);
     expect((button("Redo") as HTMLButtonElement).disabled).toBe(true);
@@ -139,7 +157,8 @@ describe("App layer interactions", () => {
 
     click(button("Play"));
     const style = canvas().querySelector("style")?.textContent ?? "";
-    expect(style).toContain("translate(var(--motion-dx), var(--motion-dy))");
+    expect(style).toContain("translate(var(--motion-start-dx), var(--motion-start-dy))");
+    expect(style).toContain("translate(var(--motion-end-dx), var(--motion-end-dy))");
     expect(style).toContain("animation-play-state: running");
     expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper").length).toBeGreaterThan(0);
     expect(canvas().querySelector(".layer-center-root.motion-wrapper")).toBeNull();
@@ -154,6 +173,30 @@ describe("App layer interactions", () => {
     expect(canvas().querySelectorAll("clipPath[id^='seam-']")).toHaveLength(2);
     expect(instances()).toHaveLength(12);
     expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper")).toHaveLength(24);
+  });
+
+  it("allows dragging the center-path start handle", () => {
+    click(button("Animate Center"));
+    const start = canvas().querySelector(".motion-path-start")!;
+    const line = canvas().querySelector(".motion-path-line")!;
+
+    act(() =>
+      start.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 20, button: 0 }))
+    );
+    act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 30, clientY: 40 })));
+
+    expect(line.getAttribute("x1")).toBe("30");
+    expect(line.getAttribute("y1")).toBe("40");
+  });
+
+  it("keeps tucked split clips attached to moving wrappers during playback", () => {
+    click(button("Animate Center"));
+    click(button("Play"));
+
+    expect(canvas().querySelectorAll("clipPath[id^='seam-']")).toHaveLength(2);
+    expect(canvas().querySelectorAll(".instance-motion-wrapper[clip-path]")).toHaveLength(24);
+    expect(canvas().querySelectorAll("use.instance.alt")).toHaveLength(12);
+    expect(instances()).toHaveLength(12);
   });
 
   it("keeps animated repeat instances synchronized when count changes during playback", () => {

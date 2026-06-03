@@ -29,24 +29,29 @@ import {
 } from "./motion/centerPath";
 import {
   createLayer,
+  createLayerGroup,
   duplicateLayer,
   duplicateLayers,
+  groupForLayer,
   insertAbove,
   moveBackward,
   moveForward,
   moveToBack,
   moveToFront,
+  pruneGroups,
   removeLayer,
+  removeGroupsForLayerIds,
   reorderByDisplay,
   updateLayer,
 } from "./document/layers";
-import type { Center, Layer, Motif, RepeatParams } from "./types";
+import type { Center, Layer, LayerGroup, Motif, RepeatParams } from "./types";
 import type { CenterPathAnimation } from "./types";
 
 type StateAction<T> = T | ((prev: T) => T);
 
 interface DocumentState {
   layers: Layer[];
+  groups: LayerGroup[];
   selectedIds: string[];
 }
 
@@ -102,6 +107,7 @@ function createInitialDocument(): DocumentState {
   });
   return {
     layers: [layer],
+    groups: [],
     selectedIds: [layer.id],
   };
 }
@@ -112,7 +118,7 @@ export default function App() {
     present: createInitialDocument(),
     future: [],
   }));
-  const { layers, selectedIds } = history.present;
+  const { layers, groups, selectedIds } = history.present;
   // Selection is a SET of layer ids (single click, shift-click, marquee drag,
   // or select-all all funnel into this). The last entry is the "primary".
   const [dragging, setDragging] = useState(false);
@@ -143,6 +149,8 @@ export default function App() {
 
   const gizmo = useMemo(() => unionBounds(editableSelected), [editableSelected]);
   const animationEditable = !!primary && selectedIds.length === 1 && primary.visible && !primary.locked;
+  const canGroupSelection = selectedIds.length >= 2;
+  const canUngroupSelection = groups.some((g) => g.layerIds.some((id) => selectedSet.has(id)));
   const motionCss = useMemo(
     () => centerPathStyles(layers.filter((l) => l.visible), animationPlaying && !dragging),
     [layers, animationPlaying, dragging]
@@ -199,13 +207,17 @@ export default function App() {
   const editableIdsRef = useRef<Set<string>>(new Set());
   editableIdsRef.current = new Set(editableSelected.map((l) => l.id));
 
-  const docRef = useRef({ layers, selectedIds, primaryId, dragging });
-  docRef.current = { layers, selectedIds, primaryId, dragging };
+  const docRef = useRef({ layers, groups, selectedIds, primaryId, dragging });
+  docRef.current = { layers, groups, selectedIds, primaryId, dragging };
 
   const commitDocument = (update: (doc: DocumentState) => DocumentState) => {
     setHistory((h) => {
       const next = update(h.present);
-      if (next.layers === h.present.layers && next.selectedIds === h.present.selectedIds) {
+      if (
+        next.layers === h.present.layers &&
+        next.groups === h.present.groups &&
+        next.selectedIds === h.present.selectedIds
+      ) {
         return h;
       }
       return {
@@ -231,6 +243,15 @@ export default function App() {
         : { ...h, present: { ...h.present, selectedIds: nextSelectedIds } };
     });
   };
+
+  function expandGroupedIds(ids: string[], sourceGroups = docRef.current.groups) {
+    const out = new Set(ids);
+    for (const id of ids) {
+      const group = groupForLayer(sourceGroups, id);
+      if (group) group.layerIds.forEach((memberId) => out.add(memberId));
+    }
+    return Array.from(out);
+  }
 
   const canUndo = history.past.length > 0;
   const canRedo = history.future.length > 0;
@@ -347,24 +368,58 @@ export default function App() {
       if (ids.size === 0) return;
       commitDocument((doc) => {
         const { layers: next, newIds } = duplicateLayers(doc.layers, new Set(ids));
-        return { layers: next, selectedIds: newIds };
+        return { ...doc, layers: next, selectedIds: newIds };
       });
     },
   });
 
   // --- Selection actions ---
   const selectSingle = (id: string, additive = false) => {
-    updateSelection((prev) =>
-      additive
-        ? prev.includes(id)
-          ? prev.filter((x) => x !== id)
-          : [...prev, id]
-        : [id]
-    );
+    const group = groupForLayer(docRef.current.groups, id);
+    const ids = group?.layerIds ?? [id];
+    updateSelection((prev) => {
+      if (!additive) return ids;
+      const next = new Set(prev);
+      const allIn = ids.every((x) => next.has(x));
+      ids.forEach((x) => {
+        if (allIn) next.delete(x);
+        else next.add(x);
+      });
+      return Array.from(next);
+    });
   };
   const selectAll = () => updateSelection(docRef.current.layers.map((l) => l.id));
   const collapseToPrimary = () =>
     updateSelection((prev) => (prev.length ? [prev[prev.length - 1]] : []));
+
+  function groupSelectedLayers() {
+    commitDocument((doc) => {
+      const selected = new Set(expandGroupedIds(doc.selectedIds, doc.groups));
+      const { groups: nextGroups, group } = createLayerGroup(doc.layers, doc.groups, selected);
+      if (!group) return doc;
+      return { ...doc, groups: nextGroups, selectedIds: group.layerIds };
+    });
+  }
+
+  function ungroupSelectedLayers() {
+    commitDocument((doc) => {
+      const selected = new Set(expandGroupedIds(doc.selectedIds, doc.groups));
+      const nextGroups = removeGroupsForLayerIds(doc.groups, selected);
+      return nextGroups === doc.groups ? doc : { ...doc, groups: nextGroups };
+    });
+  }
+
+  function ungroupGroup(groupId: string) {
+    commitDocument((doc) => {
+      const group = doc.groups.find((g) => g.id === groupId);
+      if (!group) return doc;
+      return {
+        ...doc,
+        groups: doc.groups.filter((g) => g.id !== groupId),
+        selectedIds: group.layerIds,
+      };
+    });
+  }
 
   // Marquee (click-drag) selection: select every visible, unlocked layer whose
   // artwork box intersects the dragged rectangle. Shift adds to the selection.
@@ -378,7 +433,7 @@ export default function App() {
       )
       .map((l) => l.id);
     updateSelection((prev) =>
-      additive ? Array.from(new Set([...prev, ...hit])) : hit
+      expandGroupedIds(additive ? Array.from(new Set([...prev, ...hit])) : hit)
     );
   };
 
@@ -389,7 +444,10 @@ export default function App() {
       selectSingle(id, true);
       return;
     }
-    const moveIds = selectedSet.has(id) ? [...editableIdsRef.current] : [id];
+    const groupIds = groupForLayer(docRef.current.groups, id)?.layerIds ?? [id];
+    const moveIds = selectedSet.has(id)
+      ? [...editableIdsRef.current]
+      : groupIds.filter((memberId) => docRef.current.layers.some((l) => l.id === memberId && l.visible && !l.locked));
     if (!selectedSet.has(id)) selectSingle(id);
     moveBegin(e, moveIds);
   };
@@ -418,19 +476,22 @@ export default function App() {
     setDrawingMotionPath(true);
   }
 
-  function commitMotionPathEnd(end: Center) {
+  function commitMotionPathPoint(handle: "start" | "end", point: Center) {
     if (!primaryId) return;
     updateLayers((ls) =>
       ls.map((l) => {
         if (l.id !== primaryId) return l;
-        const current = l.animation?.type === "centerPath" ? l.animation : createCenterPathAnimation(l, end);
+        const current = l.animation?.type === "centerPath" ? l.animation : createCenterPathAnimation(l, point);
         const closed = current.direction === "loop" ? true : current.closed;
+        const { start, end } = animationPoints(current, referenceInstancePoint(l));
+        const nextStart = handle === "start" ? point : start;
+        const nextEnd = handle === "end" ? point : end;
         return {
           ...l,
           animation: {
             ...current,
             closed,
-            path: { ...current.path, points: [referenceInstancePoint(l), end], closed },
+            path: { ...current.path, points: [nextStart, nextEnd], closed },
           },
           updatedAt: Date.now(),
         };
@@ -453,6 +514,7 @@ export default function App() {
   function addLayerFromMotif(motif: Motif, name: string, params = DEFAULT_PARAMS) {
     const layer = createLayer({ name, motif, params, center: viewportCenterWorld() });
     commitDocument((doc) => ({
+      ...doc,
       layers: [...doc.layers, layer],
       selectedIds: [layer.id],
     }));
@@ -469,6 +531,7 @@ export default function App() {
       if (!original) return doc;
       const copy = duplicateLayer(original);
       return {
+        ...doc,
         layers: insertAbove(doc.layers, copy, id),
         selectedIds: [copy.id],
       };
@@ -480,7 +543,7 @@ export default function App() {
     commitDocument((doc) => {
       if (doc.selectedIds.length === 0) return doc;
       const { layers: next, newIds } = duplicateLayers(doc.layers, new Set(doc.selectedIds));
-      return { layers: next, selectedIds: newIds };
+      return { ...doc, layers: next, selectedIds: newIds };
     });
   }
   function onDelete(id: string) {
@@ -491,8 +554,24 @@ export default function App() {
       const kept = doc.selectedIds.filter((x) => x !== id);
       const fallback = next[Math.min(idx, next.length - 1)];
       return {
+        ...doc,
         layers: next,
+        groups: pruneGroups(removeGroupsForLayerIds(doc.groups, new Set([id])), next),
         selectedIds: kept.length ? kept : fallback ? [fallback.id] : [],
+      };
+    });
+  }
+  function onDeleteSelected() {
+    commitDocument((doc) => {
+      if (doc.selectedIds.length === 0) return doc;
+      const ids = new Set(expandGroupedIds(doc.selectedIds, doc.groups));
+      const next = doc.layers.filter((l) => !ids.has(l.id));
+      const fallback = next[next.length - 1];
+      return {
+        ...doc,
+        layers: next,
+        groups: pruneGroups(removeGroupsForLayerIds(doc.groups, ids), next),
+        selectedIds: fallback ? [fallback.id] : [],
       };
     });
   }
@@ -575,6 +654,12 @@ export default function App() {
         collapseToPrimary();
         return;
       }
+      if (mod && e.key.toLowerCase() === "g") {
+        e.preventDefault();
+        if (e.shiftKey) ungroupSelectedLayers();
+        else groupSelectedLayers();
+        return;
+      }
       if (mod && e.key.toLowerCase() === "d") {
         e.preventDefault();
         onDuplicateSelected();
@@ -582,7 +667,7 @@ export default function App() {
       }
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        if (id) onDelete(id);
+        onDeleteSelected();
         return;
       }
       if (mod && e.key === "]") {
@@ -644,7 +729,7 @@ export default function App() {
         <button onClick={onDuplicateSelected} disabled={selectedIds.length === 0}>
           {selectedIds.length > 1 ? `Duplicate ${selectedIds.length}` : "Duplicate"}
         </button>
-        <button onClick={() => primaryId && onDelete(primaryId)} disabled={!primaryId}>
+        <button onClick={onDeleteSelected} disabled={selectedIds.length === 0}>
           Delete
         </button>
         <button onClick={resetCenter} disabled={!editableForControls}>
@@ -660,9 +745,15 @@ export default function App() {
       <div className="stage">
         <LayersPanel
           layers={layers}
+          groups={groups}
           selectedIds={selectedSet}
           dragging={dragging}
           onSelect={selectSingle}
+          onGroupSelection={groupSelectedLayers}
+          onUngroupSelection={ungroupSelectedLayers}
+          onUngroupGroup={ungroupGroup}
+          canGroupSelection={canGroupSelection}
+          canUngroupSelection={canUngroupSelection}
           onRename={onRename}
           onToggleVisible={onToggleVisible}
           onToggleLocked={onToggleLocked}
@@ -695,9 +786,13 @@ export default function App() {
             scene={scene}
             onLayerPointerDown={onLayerPointerDown}
             onMarqueeSelect={onMarqueeSelect}
-            onMotionPathCommit={commitMotionPathEnd}
+            onMotionPathCommit={commitMotionPathPoint}
             onResizePointerDown={onResizePointerDown}
             onDuplicateSelected={onDuplicateSelected}
+            onGroupSelection={groupSelectedLayers}
+            onUngroupSelection={ungroupSelectedLayers}
+            canGroupSelection={canGroupSelection}
+            canUngroupSelection={canUngroupSelection}
             onWheel={onWheel}
             panBy={panBy}
           />
@@ -729,7 +824,7 @@ export default function App() {
 
       <div className="bottombar">
         <span>Zoom {Math.round(viewport.s * 100)}%</span>
-        <span>{layers.length} layers · {visibleCount} visible</span>
+        <span>{layers.length} layers · {visibleCount} visible · {groups.length} groups</span>
         {selectedIds.length > 1 ? (
           <span>{selectedIds.length} selected ({editableSelected.length} editable)</span>
         ) : (

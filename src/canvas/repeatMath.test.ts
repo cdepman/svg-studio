@@ -6,7 +6,6 @@ import {
   paintOrder,
   seamHalves,
   subsetIndices,
-  tuckIndices,
 } from "./repeatMath";
 import type { Box, RepeatParams } from "../types";
 
@@ -95,17 +94,6 @@ describe("paintOrder (seam relocation)", () => {
   it("wraps negative and out-of-range offsets", () => {
     expect(paintOrder(8, -1)).toEqual([7, 0, 1, 2, 3, 4, 5, 6]);
     expect(paintOrder(8, 10)).toEqual([2, 3, 4, 5, 6, 7, 0, 1]);
-  });
-});
-
-describe("tuckIndices", () => {
-  it("returns the first k painted copies", () => {
-    expect(tuckIndices(8, 0, 2)).toEqual([0, 1]);
-    expect(tuckIndices(8, 3, 3)).toEqual([3, 4, 5]);
-  });
-  it("clamps k to [1, count]", () => {
-    expect(tuckIndices(8, 0, 0)).toEqual([0]);
-    expect(tuckIndices(4, 0, 99)).toEqual([0, 1, 2, 3]);
   });
 });
 

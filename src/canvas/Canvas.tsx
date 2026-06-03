@@ -3,7 +3,7 @@
 // There is no center handle: you MOVE a layer by grabbing its artwork and
 // dragging (onLayerPointerDown -> useMoveDrag). The only on-canvas widget is the
 // selection gizmo: a frame around the union of the selected layers, with corner
-// resize handles and a duplicate button.
+// resize handles and a compact selection-action menu.
 import { useEffect, useRef, useState } from "react";
 import { GIZMO_DUP_GAP, GIZMO_HANDLE, isHeavy } from "../config";
 import { LayerArt } from "./LayerArt";
@@ -35,9 +35,13 @@ interface CanvasProps {
   /** Grab a layer's artwork: select-if-needed and begin a move. */
   onLayerPointerDown: (e: React.PointerEvent, id: string, additive: boolean) => void;
   onMarqueeSelect: (rect: WorldRect, additive: boolean) => void;
-  onMotionPathCommit: (end: Center) => void;
+  onMotionPathCommit: (handle: "start" | "end", point: Center) => void;
   onResizePointerDown: (e: React.PointerEvent) => void;
   onDuplicateSelected: () => void;
+  onGroupSelection: () => void;
+  onUngroupSelection: () => void;
+  canGroupSelection: boolean;
+  canUngroupSelection: boolean;
   onWheel: (e: React.WheelEvent<SVGSVGElement>) => void;
   panBy: (dx: number, dy: number) => void;
 }
@@ -58,6 +62,10 @@ export function Canvas({
   onMotionPathCommit,
   onResizePointerDown,
   onDuplicateSelected,
+  onGroupSelection,
+  onUngroupSelection,
+  canGroupSelection,
+  canUngroupSelection,
   onWheel,
   panBy,
 }: CanvasProps) {
@@ -67,13 +75,19 @@ export function Canvas({
   const spaceHeld = useRef(false);
   const panState = useRef({ active: false, lastX: 0, lastY: 0 });
   const motionLineRef = useRef<SVGLineElement>(null);
+  const motionStartRef = useRef<SVGCircleElement>(null);
   const motionEndRef = useRef<SVGCircleElement>(null);
   // Marquee selection. Mode is tracked on a ref (per-frame), rect in state so
   // the dashed box renders; LayerArt is memoized so this re-render is cheap.
   const mode = useRef<"pan" | "marquee" | "motion-path" | null>(null);
   const marqueeStart = useRef<Center>({ x: 0, y: 0 });
-  const motionDrag = useRef({ pending: null as PointerEvent | null, queued: false });
+  const motionDrag = useRef({
+    handle: "end" as "start" | "end",
+    pending: null as PointerEvent | null,
+    queued: false,
+  });
   const [marquee, setMarquee] = useState<WorldRect | null>(null);
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
 
   const normRect = (a: Center, b: Center): WorldRect => ({
     minX: Math.min(a.x, b.x),
@@ -97,18 +111,20 @@ export function Canvas({
     };
   }, []);
 
-  const paintMotionEnd = (point: Center) => {
-    motionLineRef.current?.setAttribute("x2", String(point.x));
-    motionLineRef.current?.setAttribute("y2", String(point.y));
-    motionEndRef.current?.setAttribute("cx", String(point.x));
-    motionEndRef.current?.setAttribute("cy", String(point.y));
+  const paintMotionHandle = (handle: "start" | "end", point: Center) => {
+    const axis = handle === "start" ? "1" : "2";
+    motionLineRef.current?.setAttribute(`x${axis}`, String(point.x));
+    motionLineRef.current?.setAttribute(`y${axis}`, String(point.y));
+    const circle = handle === "start" ? motionStartRef.current : motionEndRef.current;
+    circle?.setAttribute("cx", String(point.x));
+    circle?.setAttribute("cy", String(point.y));
   };
 
   const applyMotionDrag = () => {
     motionDrag.current.queued = false;
     const e = motionDrag.current.pending;
     if (!e) return;
-    paintMotionEnd(scene.screenToWorld(e.clientX, e.clientY));
+    paintMotionHandle(motionDrag.current.handle, scene.screenToWorld(e.clientX, e.clientY));
   };
 
   const motionMove = (e: PointerEvent) => {
@@ -123,18 +139,20 @@ export function Canvas({
     window.removeEventListener("pointermove", motionMove);
     window.removeEventListener("pointerup", motionUp);
     const point = scene.screenToWorld(e.clientX, e.clientY);
-    paintMotionEnd(point);
+    const handle = motionDrag.current.handle;
+    paintMotionHandle(handle, point);
     mode.current = null;
-    onMotionPathCommit(point);
+    onMotionPathCommit(handle, point);
   };
 
-  const beginMotionDrag = (e: React.PointerEvent) => {
+  const beginMotionDrag = (e: React.PointerEvent, handle: "start" | "end" = "end") => {
     e.preventDefault();
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     mode.current = "motion-path";
+    motionDrag.current.handle = handle;
     const point = scene.screenToWorld(e.clientX, e.clientY);
-    paintMotionEnd(point);
+    paintMotionHandle(handle, point);
     window.addEventListener("pointermove", motionMove);
     window.addEventListener("pointerup", motionUp);
   };
@@ -149,8 +167,9 @@ export function Canvas({
       return;
     }
     if (e.button !== 0) return;
-    // The gizmo (resize handles + duplicate button) owns its own pointerdowns.
+    // The gizmo (resize handles + selection menu) owns its own pointerdowns.
     if ((e.target as Element).closest?.(".gizmo, .motion-path-ui")) return;
+    setActionMenuOpen(false);
 
     if (drawingMotionPath && motionPath) {
       beginMotionDrag(e);
@@ -246,10 +265,12 @@ export function Canvas({
                 y2={motionPath.end.y}
               />
               <circle
+                ref={motionStartRef}
                 className="motion-path-start"
                 cx={motionPath.start.x}
                 cy={motionPath.start.y}
                 r={7 * inv}
+                onPointerDown={(e) => beginMotionDrag(e, "start")}
               />
               <circle
                 ref={motionEndRef}
@@ -257,12 +278,12 @@ export function Canvas({
                 cx={motionPath.end.x}
                 cy={motionPath.end.y}
                 r={9 * inv}
-                onPointerDown={beginMotionDrag}
+                onPointerDown={(e) => beginMotionDrag(e, "end")}
               />
             </g>
           )}
-          {/* Selection gizmo: union frame + corner resize handles + a duplicate
-              button. The "meta tool" on the edge of the selection. */}
+          {/* Selection gizmo: union frame + corner resize handles + a compact
+              action menu. The menu sits on the 45° corner ray from top-right. */}
           {gizmo && (
             <g ref={scene.gizmoRef} className="gizmo" transform={`translate(${gizmo.cx},${gizmo.cy})`}>
               <rect
@@ -291,19 +312,56 @@ export function Canvas({
                   />
                 );
               })}
-              {/* Duplicate button (top-right), drawn in screen px via scale(inv). */}
+              {/* Selection action menu, drawn in screen px via scale(inv). */}
               <g
-                className="gizmo-dup"
-                transform={`translate(${gizmo.hw + GIZMO_DUP_GAP * inv},${-gizmo.hh}) scale(${inv})`}
+                className="gizmo-action-menu"
+                transform={`translate(${gizmo.hw + GIZMO_DUP_GAP * inv},${-gizmo.hh - GIZMO_DUP_GAP * inv}) scale(${inv})`}
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDuplicateSelected();
                 }}
               >
-                <title>Duplicate selection</title>
-                <circle r={11} />
-                <path className="gizmo-plus" d="M -5 0 H 5 M 0 -5 V 5" />
+                {actionMenuOpen && (
+                  <>
+                    <g
+                      className="gizmo-action"
+                      transform="translate(0,-32)"
+                      onClick={() => {
+                        onDuplicateSelected();
+                        setActionMenuOpen(false);
+                      }}
+                    >
+                      <title>Duplicate selection</title>
+                      <circle r={11} />
+                      <path className="gizmo-icon" d="M -4 -3 H 3 V 4 H -4 Z M -1 -6 H 6 V 1" />
+                    </g>
+                    <g
+                      className={canGroupSelection || canUngroupSelection ? "gizmo-action" : "gizmo-action disabled"}
+                      transform="translate(32,0)"
+                      onClick={() => {
+                        if (canUngroupSelection) onUngroupSelection();
+                        else if (canGroupSelection) onGroupSelection();
+                        setActionMenuOpen(false);
+                      }}
+                    >
+                      <title>{canUngroupSelection ? "Ungroup selection" : "Group selection"}</title>
+                      <circle r={11} />
+                      {canUngroupSelection ? (
+                        <path className="gizmo-icon" d="M -6 -5 H -1 V 0 H -6 Z M 1 0 H 6 V 5 H 1 Z M -1 0 L 1 0" />
+                      ) : (
+                        <path className="gizmo-icon" d="M -6 -5 H -1 V 0 H -6 Z M 1 0 H 6 V 5 H 1 Z M -1 0 L 1 0" />
+                      )}
+                    </g>
+                  </>
+                )}
+                <g
+                  className="gizmo-action primary"
+                  onClick={() => setActionMenuOpen((open) => !open)}
+                >
+                  <title>Selection actions</title>
+                  <circle r={11} />
+                  <path className="gizmo-plus" d="M -5 0 H 5 M 0 -5 V 5" />
+                </g>
               </g>
             </g>
           )}

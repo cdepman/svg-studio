@@ -160,8 +160,8 @@ export function useScene(): Scene {
       h.setAttribute("width", String(hs));
       h.setAttribute("height", String(hs));
     });
-    const dup = g.querySelector(".gizmo-dup");
-    dup?.setAttribute("transform", `translate(${b.hw + GIZMO_DUP_GAP * inv},${-b.hh}) scale(${inv})`);
+    const actions = g.querySelector(".gizmo-action-menu");
+    actions?.setAttribute("transform", `translate(${b.hw + GIZMO_DUP_GAP * inv},${-b.hh - GIZMO_DUP_GAP * inv}) scale(${inv})`);
   }, []);
 
   const applyParamDelta = useCallback(
@@ -185,6 +185,10 @@ export function useScene(): Scene {
                 ? instanceMotionVectorForGeometry(p, t.scale, t.animation, fallbackStart, i)
                 : null;
               if (!v) return;
+              g.style.setProperty("--motion-start-dx", `${v.startDx}px`);
+              g.style.setProperty("--motion-start-dy", `${v.startDy}px`);
+              g.style.setProperty("--motion-end-dx", `${v.endDx}px`);
+              g.style.setProperty("--motion-end-dy", `${v.endDy}px`);
               g.style.setProperty("--motion-dx", `${v.dx}px`);
               g.style.setProperty("--motion-dy", `${v.dy}px`);
               g.style.setProperty("--motion-angle", `${v.angle}deg`);

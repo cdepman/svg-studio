@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   createLayer,
+  createLayerGroup,
   duplicateLayer,
   duplicateLayers,
+  groupForLayer,
   insertAbove,
   moveBackward,
   moveForward,
   moveToBack,
   moveToFront,
+  pruneGroups,
   removeLayer,
+  removeGroupsForLayerIds,
   reorderByDisplay,
   updateLayer,
 } from "./layers";
@@ -91,6 +95,27 @@ describe("insertAbove", () => {
     const b = mk("B");
     const x = mk("X");
     expect(ids(insertAbove([a, b], x, a.id))).toEqual(["A", "X", "B"]);
+  });
+});
+
+describe("layer groups", () => {
+  it("creates a group from selected ids in layer order", () => {
+    const [a, b, c] = [mk("A"), mk("B"), mk("C")];
+    const { groups, group } = createLayerGroup([a, b, c], [], new Set([c.id, a.id]));
+    expect(group?.layerIds).toEqual([a.id, c.id]);
+    expect(groups).toHaveLength(1);
+    expect(groupForLayer(groups, c.id)?.id).toBe(group?.id);
+  });
+
+  it("replaces overlapping groups and prunes deleted members", () => {
+    const [a, b, c] = [mk("A"), mk("B"), mk("C")];
+    const first = createLayerGroup([a, b, c], [], new Set([a.id, b.id])).groups;
+    const second = createLayerGroup([a, b, c], first, new Set([b.id, c.id])).groups;
+    expect(second).toHaveLength(1);
+    expect(second[0].layerIds).toEqual([b.id, c.id]);
+
+    expect(removeGroupsForLayerIds(second, new Set([b.id]))).toEqual([]);
+    expect(pruneGroups(second, [c])).toEqual([]);
   });
 });
 

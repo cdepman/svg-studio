@@ -7,9 +7,9 @@ import {
   maxAbsScale,
   paintOrder,
   seamHalves,
-  tuckIndices,
 } from "../canvas/repeatMath";
 import {
+  animationReachPadding,
   animationPoints,
   centerPathStyles,
   instanceMotionStyleText,
@@ -55,8 +55,7 @@ function animatedLayerBounds(layer: Layer) {
 function layerMarkup(layer: Layer, animated: boolean): string {
   const { params, center, motif, id } = layer;
   const motifId = `motif-${id}`;
-  const animatedTuck = params.tuck && animated && !!layer.animation?.enabled;
-  const useTuck = params.tuck && !animatedTuck;
+  const useTuck = params.tuck;
 
   const useEl = (i: number, alt = false) =>
     `          <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}"${animated ? instanceMotionStyleText(layer, i) : ""}>
@@ -74,7 +73,7 @@ function layerMarkup(layer: Layer, animated: boolean): string {
   let body: string;
   if (useTuck) {
     // Two complementary half-disks (see seamHalves) — seamless, no double-blend.
-    const h = seamHalves(params, motif.box);
+    const h = seamHalves(params, motif.box, animated ? animationReachPadding(layer) : 0);
     const oppClip = `seam-opp-${id}`;
     const seamClip = `seam-half-${id}`;
     defs =
@@ -82,13 +81,9 @@ function layerMarkup(layer: Layer, animated: boolean): string {
       `\n    <clipPath id="${seamClip}" clipPathUnits="userSpaceOnUse"><path d="${h.seamHalfD}"/></clipPath>`;
     body =
       `    <g clip-path="url(#${oppClip})">\n${h.oppOrder.map((i) => useEl(i)).join("\n")}\n    </g>\n` +
-      `    <g clip-path="url(#${seamClip})">\n${h.seamOrder.map((i) => useEl(i)).join("\n")}\n    </g>`;
+      `    <g clip-path="url(#${seamClip})">\n${h.seamOrder.map((i) => useEl(i, true)).join("\n")}\n    </g>`;
   } else {
-    const base = paintOrder(params.count, params.paintOffset).map((i) => useEl(i));
-    const tuck = animatedTuck
-      ? tuckIndices(params.count, params.paintOffset, params.seamBlend).map((i) => useEl(i, true))
-      : [];
-    body = [...base, ...tuck].join("\n");
+    body = paintOrder(params.count, params.paintOffset).map((i) => useEl(i)).join("\n");
   }
 
   return `  <defs>

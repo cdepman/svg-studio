@@ -1,16 +1,23 @@
 // Flat layers panel. Renders the layer array REVERSED so the top row is the
-// visual front (array end). PRD §5, §10. No tree, no folders.
+// visual front (array end). Groups are editor-level sets, shown as compact
+// badges without changing the flat render order.
 import { useRef, useState } from "react";
-import type { Layer } from "../types";
+import type { Layer, LayerGroup } from "../types";
 
 export type MoveDir = "front" | "forward" | "backward" | "back";
 
 interface LayersPanelProps {
   layers: Layer[];
+  groups: LayerGroup[];
   selectedIds: Set<string>;
   /** Toggles are disabled mid-drag so visibility can't change during a gesture. PRD §17. */
   dragging: boolean;
   onSelect: (id: string, additive?: boolean) => void;
+  onGroupSelection: () => void;
+  onUngroupSelection: () => void;
+  onUngroupGroup: (groupId: string) => void;
+  canGroupSelection: boolean;
+  canUngroupSelection: boolean;
   onRename: (id: string, name: string) => void;
   onToggleVisible: (id: string) => void;
   onToggleLocked: (id: string) => void;
@@ -23,9 +30,15 @@ interface LayersPanelProps {
 
 export function LayersPanel({
   layers,
+  groups,
   selectedIds,
   dragging,
   onSelect,
+  onGroupSelection,
+  onUngroupSelection,
+  onUngroupGroup,
+  canGroupSelection,
+  canUngroupSelection,
   onRename,
   onToggleVisible,
   onToggleLocked,
@@ -41,14 +54,41 @@ export function LayersPanel({
 
   // Top row = front = end of the internal array.
   const display = layers.slice().reverse();
+  const groupByLayer = new Map<string, LayerGroup>();
+  groups.forEach((g) => g.layerIds.forEach((id) => groupByLayer.set(id, g)));
+  const layerById = new Map(layers.map((l) => [l.id, l]));
+  const emittedGroups = new Set<string>();
+  const groupedDisplay = display.flatMap((layer) => {
+    const group = groupByLayer.get(layer.id);
+    if (!group) return [{ kind: "layer" as const, layer, depth: 0 }];
+    if (emittedGroups.has(group.id)) return [];
+    emittedGroups.add(group.id);
+    const members = group.layerIds
+      .map((id) => layerById.get(id))
+      .filter((l): l is Layer => !!l)
+      .slice()
+      .reverse();
+    return [
+      { kind: "group" as const, group, members },
+      ...members.map((member) => ({ kind: "layer" as const, layer: member, depth: 1 })),
+    ];
+  });
 
   return (
     <div className="layers-panel">
       <div className="layers-head">
         <span className="layers-title">Layers</span>
-        <button className="mini" onClick={onNewLayer} title="New layer">
-          + New
-        </button>
+        <div className="layers-head-actions">
+          <button className="mini" onClick={onGroupSelection} disabled={!canGroupSelection} title="Group selected layers (⌘G)">
+            Group
+          </button>
+          <button className="mini" onClick={onUngroupSelection} disabled={!canUngroupSelection} title="Ungroup selected layers (⌘⇧G)">
+            Ungroup
+          </button>
+          <button className="mini" onClick={onNewLayer} title="New layer">
+            + New
+          </button>
+        </div>
       </div>
 
       {display.length === 0 && (
@@ -61,12 +101,42 @@ export function LayersPanel({
       )}
 
       <ul className="layers-list">
-        {display.map((l) => {
+        {groupedDisplay.map((entry) => {
+          if (entry.kind === "group") {
+            const selected = entry.group.layerIds.every((id) => selectedIds.has(id));
+            return (
+              <li
+                key={entry.group.id}
+                className={`group-row${selected ? " selected" : ""}`}
+                onClick={(e) => onSelect(entry.group.layerIds[0], e.shiftKey || e.metaKey)}
+              >
+                <span className="group-disclosure">▾</span>
+                <span className="group-icon">G</span>
+                <span className="layer-name" title={entry.group.name}>
+                  {entry.group.name}
+                </span>
+                <span className="group-count">{entry.members.length}</span>
+                <button
+                  className="mini"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUngroupGroup(entry.group.id);
+                  }}
+                  title="Ungroup"
+                >
+                  Ungroup
+                </button>
+              </li>
+            );
+          }
+
+          const l = entry.layer;
           const selected = selectedIds.has(l.id);
+          const group = groupByLayer.get(l.id);
           return (
             <li
               key={l.id}
-              className={`layer-row${selected ? " selected" : ""}`}
+              className={`layer-row${entry.depth ? " child-row" : ""}${selected ? " selected" : ""}`}
               draggable
               onDragStart={(e) => {
                 draggedId.current = l.id;
@@ -130,6 +200,11 @@ export function LayersPanel({
                   }}
                 >
                   {l.name}
+                </span>
+              )}
+              {group && entry.depth === 0 && (
+                <span className="layer-group-badge" title={group.name}>
+                  G
                 </span>
               )}
 

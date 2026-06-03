@@ -13,10 +13,9 @@ import {
   paintOrder,
   seamHalves,
   subsetIndices,
-  tuckIndices,
 } from "./repeatMath";
 import { PROXY_CAP } from "../config";
-import { instanceMotionStyle, motionClassName } from "../motion/centerPath";
+import { animationReachPadding, instanceMotionStyle, motionClassName } from "../motion/centerPath";
 import type { Layer } from "../types";
 
 interface LayerArtProps {
@@ -27,15 +26,14 @@ interface LayerArtProps {
   animationsMoving: boolean;
 }
 
-function LayerArtImpl({ layer, proxy, animationsMoving }: LayerArtProps) {
+function LayerArtImpl({ layer, proxy }: LayerArtProps) {
   const p = layer.params;
   const motifId = `motif-${layer.id}`;
   const oppClipId = `seam-opp-${layer.id}`;
   const seamClipId = `seam-half-${layer.id}`;
 
-  const animatedTuck = p.tuck && !proxy && !!layer.animation?.enabled && animationsMoving;
-  const showTuck = p.tuck && !proxy && !animatedTuck;
-  const halves = showTuck ? seamHalves(p, layer.motif.box) : null;
+  const showTuck = p.tuck && !proxy;
+  const halves = showTuck ? seamHalves(p, layer.motif.box, animationReachPadding(layer)) : null;
 
   // `alt` tags the second (seam-half) pass so the two passes are distinguishable;
   // both carry `instance` so the imperative sweep updates them together.
@@ -102,11 +100,6 @@ function LayerArtImpl({ layer, proxy, animationsMoving }: LayerArtProps) {
                 {/* Half containing the seam: order rotated 180° (its seam is on the
                     far side, excluded here). Complementary clips => no double-blend. */}
                 <g clipPath={`url(#${seamClipId})`}>{halves.seamOrder.map((i) => Use(i, true))}</g>
-              </>
-            ) : animatedTuck ? (
-              <>
-                {paintOrder(p.count, p.paintOffset).map((i) => Use(i))}
-                {tuckIndices(p.count, p.paintOffset, p.seamBlend).map((i) => Use(i, true))}
               </>
             ) : (
               (proxy ? subsetIndices(p.count, PROXY_CAP) : paintOrder(p.count, p.paintOffset)).map((i) => Use(i))
