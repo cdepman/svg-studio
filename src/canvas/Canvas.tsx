@@ -25,12 +25,17 @@ interface CanvasProps {
   selectedIds: Set<string>;
   /** Selection gizmo bounds (union of selected, editable layers), or null. */
   gizmo: GBounds | null;
+  motionCss: string;
+  motionPath: { start: Center; end: Center; closed: boolean } | null;
+  drawingMotionPath: boolean;
+  animationsMoving: boolean;
   viewport: Viewport;
   dragging: boolean;
   scene: Scene;
   /** Grab a layer's artwork: select-if-needed and begin a move. */
   onLayerPointerDown: (e: React.PointerEvent, id: string, additive: boolean) => void;
   onMarqueeSelect: (rect: WorldRect, additive: boolean) => void;
+  onMotionPathCommit: (end: Center) => void;
   onResizePointerDown: (e: React.PointerEvent) => void;
   onDuplicateSelected: () => void;
   onWheel: (e: React.WheelEvent<SVGSVGElement>) => void;
@@ -41,11 +46,16 @@ export function Canvas({
   layers,
   selectedIds,
   gizmo,
+  motionCss,
+  motionPath,
+  drawingMotionPath,
+  animationsMoving,
   viewport,
   dragging,
   scene,
   onLayerPointerDown,
   onMarqueeSelect,
+  onMotionPathCommit,
   onResizePointerDown,
   onDuplicateSelected,
   onWheel,
@@ -56,10 +66,13 @@ export function Canvas({
 
   const spaceHeld = useRef(false);
   const panState = useRef({ active: false, lastX: 0, lastY: 0 });
+  const motionLineRef = useRef<SVGLineElement>(null);
+  const motionEndRef = useRef<SVGCircleElement>(null);
   // Marquee selection. Mode is tracked on a ref (per-frame), rect in state so
   // the dashed box renders; LayerArt is memoized so this re-render is cheap.
-  const mode = useRef<"pan" | "marquee" | null>(null);
+  const mode = useRef<"pan" | "marquee" | "motion-path" | null>(null);
   const marqueeStart = useRef<Center>({ x: 0, y: 0 });
+  const motionDrag = useRef({ pending: null as PointerEvent | null, queued: false });
   const [marquee, setMarquee] = useState<WorldRect | null>(null);
 
   const normRect = (a: Center, b: Center): WorldRect => ({
@@ -84,6 +97,48 @@ export function Canvas({
     };
   }, []);
 
+  const paintMotionEnd = (point: Center) => {
+    motionLineRef.current?.setAttribute("x2", String(point.x));
+    motionLineRef.current?.setAttribute("y2", String(point.y));
+    motionEndRef.current?.setAttribute("cx", String(point.x));
+    motionEndRef.current?.setAttribute("cy", String(point.y));
+  };
+
+  const applyMotionDrag = () => {
+    motionDrag.current.queued = false;
+    const e = motionDrag.current.pending;
+    if (!e) return;
+    paintMotionEnd(scene.screenToWorld(e.clientX, e.clientY));
+  };
+
+  const motionMove = (e: PointerEvent) => {
+    motionDrag.current.pending = e;
+    if (!motionDrag.current.queued) {
+      motionDrag.current.queued = true;
+      requestAnimationFrame(applyMotionDrag);
+    }
+  };
+
+  const motionUp = (e: PointerEvent) => {
+    window.removeEventListener("pointermove", motionMove);
+    window.removeEventListener("pointerup", motionUp);
+    const point = scene.screenToWorld(e.clientX, e.clientY);
+    paintMotionEnd(point);
+    mode.current = null;
+    onMotionPathCommit(point);
+  };
+
+  const beginMotionDrag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    mode.current = "motion-path";
+    const point = scene.screenToWorld(e.clientX, e.clientY);
+    paintMotionEnd(point);
+    window.addEventListener("pointermove", motionMove);
+    window.addEventListener("pointerup", motionUp);
+  };
+
   const onSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     const wantPan = e.button === 1 || (e.button === 0 && spaceHeld.current);
     if (wantPan) {
@@ -95,7 +150,12 @@ export function Canvas({
     }
     if (e.button !== 0) return;
     // The gizmo (resize handles + duplicate button) owns its own pointerdowns.
-    if ((e.target as Element).closest?.(".gizmo")) return;
+    if ((e.target as Element).closest?.(".gizmo, .motion-path-ui")) return;
+
+    if (drawingMotionPath && motionPath) {
+      beginMotionDrag(e);
+      return;
+    }
 
     // Grab on a layer's artwork: select-if-needed and begin a move (locked
     // artwork is inert).
@@ -130,7 +190,7 @@ export function Canvas({
       onMarqueeSelect(rect, e.shiftKey);
       setMarquee(null);
     }
-    mode.current = null;
+    if (mode.current !== "motion-path") mode.current = null;
     panState.current.active = false;
   };
   const endPan = () => {
@@ -149,6 +209,7 @@ export function Canvas({
       onPointerUp={onSvgPointerUp}
       onPointerLeave={endPan}
     >
+      {motionCss && <style>{motionCss}</style>}
       <g ref={scene.panZoomRef} transform={`translate(${tx},${ty}) scale(${s})`}>
         <g ref={scene.layersRootRef} className="layers-root">
           {layers
@@ -159,6 +220,7 @@ export function Canvas({
                 layer={l}
                 // Proxy only the layers being dragged in a heavy scene.
                 proxy={dragging && selectedIds.has(l.id) && isHeavy(l.params.count, l.motif.weight)}
+                animationsMoving={animationsMoving}
               />
             ))}
         </g>
@@ -172,6 +234,32 @@ export function Canvas({
               width={marquee.maxX - marquee.minX}
               height={marquee.maxY - marquee.minY}
             />
+          )}
+          {motionPath && (
+            <g className="motion-path-ui">
+              <line
+                ref={motionLineRef}
+                className={motionPath.closed ? "motion-path-line closed" : "motion-path-line"}
+                x1={motionPath.start.x}
+                y1={motionPath.start.y}
+                x2={motionPath.end.x}
+                y2={motionPath.end.y}
+              />
+              <circle
+                className="motion-path-start"
+                cx={motionPath.start.x}
+                cy={motionPath.start.y}
+                r={7 * inv}
+              />
+              <circle
+                ref={motionEndRef}
+                className="motion-path-end"
+                cx={motionPath.end.x}
+                cy={motionPath.end.y}
+                r={9 * inv}
+                onPointerDown={beginMotionDrag}
+              />
+            </g>
           )}
           {/* Selection gizmo: union frame + corner resize handles + a duplicate
               button. The "meta tool" on the edge of the selection. */}

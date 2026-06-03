@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAnimatedExportSvg,
   buildExportSvg,
   buildExportSvgFromRenderedLayers,
   ensureSvgFilename,
 } from "./exportSvg";
 import { createLayer } from "../document/layers";
+import { createCenterPathAnimation } from "../motion/centerPath";
 import type { Layer, Motif, RepeatParams } from "../types";
 
 const motif: Motif = {
@@ -109,5 +111,29 @@ describe("buildExportSvg (PRD §14)", () => {
     expect(ensureSvgFilename("radial-repeat-004")).toBe("radial-repeat-004.svg");
     expect(ensureSvgFilename("radial-repeat-004.SVG")).toBe("radial-repeat-004.SVG");
     expect(ensureSvgFilename("  ")).toBe("radial-repeat.svg");
+  });
+
+  it("animated export includes CSS motion path while static export does not", () => {
+    const a = mk({ id: "a", center: { x: 10, y: 20 } });
+    a.animation = createCenterPathAnimation(a, { x: 110, y: 70 });
+
+    expect(buildExportSvg([a])).not.toContain("--motion-dx");
+    const svg = buildAnimatedExportSvg([a]);
+    expect(svg).toContain("translate(var(--motion-dx), var(--motion-dy))");
+    expect(svg).toContain("@keyframes motion-a-keyframes");
+    expect(svg).toContain("--motion-dx:50px");
+    expect(svg).toContain("--motion-dy:50px");
+    expect((svg.match(/class="instance-motion-wrapper motion-wrapper motion-a"/g) ?? []).length).toBe(4);
+    expect(svg).not.toContain('clip-path="url(#seam-');
+  });
+
+  it("animated export keeps tucked seam ordering without clipping the motion", () => {
+    const a = mk({ id: "a", params: { ...params, tuck: true, seamBlend: 2 } });
+    a.animation = createCenterPathAnimation(a, { x: 110, y: 70 });
+
+    const svg = buildAnimatedExportSvg([a]);
+    expect(svg).not.toContain('clip-path="url(#seam-');
+    expect(svg).toContain('class="alt"');
+    expect((svg.match(/class="instance-motion-wrapper motion-wrapper motion-a"/g) ?? []).length).toBe(6);
   });
 });

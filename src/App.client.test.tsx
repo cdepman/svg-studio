@@ -132,6 +132,44 @@ describe("App layer interactions", () => {
     expect(rows()).toHaveLength(2);
   });
 
+  it("creates a center-path animation and toggles playback", () => {
+    click(button("Animate Center"));
+    expect(canvas().querySelector(".motion-path-line")).toBeTruthy();
+    expect(container.textContent).toContain("Duration");
+
+    click(button("Play"));
+    const style = canvas().querySelector("style")?.textContent ?? "";
+    expect(style).toContain("translate(var(--motion-dx), var(--motion-dy))");
+    expect(style).toContain("animation-play-state: running");
+    expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper").length).toBeGreaterThan(0);
+    expect(canvas().querySelector(".layer-center-root.motion-wrapper")).toBeNull();
+
+    click(button("Pause"));
+    expect(canvas().querySelector("style")?.textContent ?? "").toContain("animation-play-state: paused");
+  });
+
+  it("keeps the tucked still-frame ordering when entering animation edit mode", () => {
+    click(button("Animate Center"));
+
+    expect(canvas().querySelectorAll("clipPath[id^='seam-']")).toHaveLength(2);
+    expect(instances()).toHaveLength(12);
+    expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper")).toHaveLength(24);
+  });
+
+  it("keeps animated repeat instances synchronized when count changes during playback", () => {
+    const countInput = () => container.querySelector(".controls-body input[type=range]") as HTMLInputElement;
+
+    click(button("Animate Center"));
+    click(button("Play"));
+    setRange(countInput(), 24);
+
+    expect(instances()).toHaveLength(24);
+    const wrappers = Array.from(canvas().querySelectorAll<SVGGElement>(".instance-motion-wrapper.motion-wrapper"));
+    expect(wrappers.length).toBeGreaterThanOrEqual(24);
+    expect(wrappers.every((w) => w.style.getPropertyValue("--motion-dx"))).toBe(true);
+    expect(wrappers.every((w) => w.style.getPropertyValue("--motion-dy"))).toBe(true);
+  });
+
   it("hiding a layer removes it from the canvas but keeps the panel row", () => {
     const beforeId = canvasLayerIds()[0];
     const eye = container.querySelector('.layer-row .mini[title="Hide"]');
@@ -175,8 +213,8 @@ describe("App layer interactions", () => {
   });
 
   it("grabbing a layer's artwork and dragging moves its center", () => {
-    const repeatRoot = () => canvas().querySelector(".layer .repeat-root")!;
-    expect(repeatRoot().getAttribute("transform")).toBe("translate(0,0)");
+    const centerRoot = () => canvas().querySelector(".layer .layer-center-root")!;
+    expect(centerRoot().getAttribute("transform")).toBe("translate(0,0)");
 
     const art = canvas().querySelector(".layer use.instance")!;
     // jsdom has no PointerEvent; MouseEvent with a pointer type name still drives
@@ -186,7 +224,7 @@ describe("App layer interactions", () => {
     act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 130, clientY: 150 })));
 
     // commit applies delta (30,50) to the layer center
-    expect(repeatRoot().getAttribute("transform")).toBe("translate(30,50)");
+    expect(centerRoot().getAttribute("transform")).toBe("translate(30,50)");
   });
 
   it("Option + dragging a resize handle duplicates and resizes the copy", () => {

@@ -13,36 +13,56 @@ import {
   paintOrder,
   seamHalves,
   subsetIndices,
+  tuckIndices,
 } from "./repeatMath";
 import { PROXY_CAP } from "../config";
+import { instanceMotionStyle, motionClassName } from "../motion/centerPath";
 import type { Layer } from "../types";
 
 interface LayerArtProps {
   layer: Layer;
   /** Render only a representative subset (drag-time fidelity fallback). PRD §9. */
   proxy: boolean;
+  /** True only while CSS preview playback is actively moving instances. */
+  animationsMoving: boolean;
 }
 
-function LayerArtImpl({ layer, proxy }: LayerArtProps) {
+function LayerArtImpl({ layer, proxy, animationsMoving }: LayerArtProps) {
   const p = layer.params;
   const motifId = `motif-${layer.id}`;
   const oppClipId = `seam-opp-${layer.id}`;
   const seamClipId = `seam-half-${layer.id}`;
 
-  const showTuck = p.tuck && !proxy;
+  const animatedTuck = p.tuck && !proxy && !!layer.animation?.enabled && animationsMoving;
+  const showTuck = p.tuck && !proxy && !animatedTuck;
   const halves = showTuck ? seamHalves(p, layer.motif.box) : null;
 
   // `alt` tags the second (seam-half) pass so the two passes are distinguishable;
   // both carry `instance` so the imperative sweep updates them together.
+  const instanceKeyPrefix = layer.animation?.enabled
+    ? `${p.count}:${p.angleOffset}:${p.radiusOffset}:${layer.scale}`
+    : "";
   const Use = (i: number, alt = false) => (
-    <use
-      key={i}
-      data-i={i}
-      className={alt ? "instance alt" : "instance"}
-      href={`#${motifId}`}
-      transform={instanceTransform(p, i)}
-      opacity={instanceOpacity(p, i)}
-    />
+    <g
+      key={`${instanceKeyPrefix}:${alt ? `${i}-alt` : i}`}
+      className={`instance-motion-wrapper motion-wrapper ${motionClassName(layer.id)}`}
+      style={instanceMotionStyle(layer, i)}
+    >
+      <g
+        data-i={i}
+        className="instance-placement"
+        transform={instanceTransform(p, i)}
+        opacity={instanceOpacity(p, i)}
+      >
+        <g className="instance-follow-wrapper">
+          <use
+            data-i={i}
+            className={alt ? "instance alt" : "instance"}
+            href={`#${motifId}`}
+          />
+        </g>
+      </g>
+    </g>
   );
 
   return (
@@ -66,22 +86,32 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
         )}
       </defs>
 
-      {/* repeat-root: its translate changes during this layer's center drag.
-          repeat-scale: its scale changes during a resize. Kept separate so the
-          two gestures never fight over one transform. */}
-      <g className="repeat-root" transform={`translate(${layer.center.x},${layer.center.y})`}>
-        <g className="repeat-scale" transform={`scale(${layer.scale})`}>
-          {halves ? (
-            <>
-              {/* Half opposite the seam: normal order (its seam is excluded here). */}
-              <g clipPath={`url(#${oppClipId})`}>{halves.oppOrder.map((i) => Use(i))}</g>
-              {/* Half containing the seam: order rotated 180° (its seam is on the
-                  far side, excluded here). Complementary clips => no double-blend. */}
-              <g clipPath={`url(#${seamClipId})`}>{halves.seamOrder.map((i) => Use(i, true))}</g>
-            </>
-          ) : (
-            (proxy ? subsetIndices(p.count, PROXY_CAP) : paintOrder(p.count, p.paintOffset)).map((i) => Use(i))
-          )}
+      {/* layer-center-root: its translate changes during moves. Each repeated
+          item gets its own motion-wrapper so synchronized path animation is
+          applied per copy, not once to the whole layer. */}
+      <g
+        className="layer-center-root"
+        transform={`translate(${layer.center.x},${layer.center.y})`}
+      >
+        <g className="repeat-root">
+          <g className="repeat-scale" transform={`scale(${layer.scale})`}>
+            {halves ? (
+              <>
+                {/* Half opposite the seam: normal order (its seam is excluded here). */}
+                <g clipPath={`url(#${oppClipId})`}>{halves.oppOrder.map((i) => Use(i))}</g>
+                {/* Half containing the seam: order rotated 180° (its seam is on the
+                    far side, excluded here). Complementary clips => no double-blend. */}
+                <g clipPath={`url(#${seamClipId})`}>{halves.seamOrder.map((i) => Use(i, true))}</g>
+              </>
+            ) : animatedTuck ? (
+              <>
+                {paintOrder(p.count, p.paintOffset).map((i) => Use(i))}
+                {tuckIndices(p.count, p.paintOffset, p.seamBlend).map((i) => Use(i, true))}
+              </>
+            ) : (
+              (proxy ? subsetIndices(p.count, PROXY_CAP) : paintOrder(p.count, p.paintOffset)).map((i) => Use(i))
+            )}
+          </g>
         </g>
       </g>
     </g>

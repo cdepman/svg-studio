@@ -7,7 +7,7 @@
 // renders. Discrete controls (count, orientation, mirror, seam) set an ABSOLUTE
 // value on every selected layer.
 import { useEffect, useRef } from "react";
-import type { Layer, OrientationMode, RepeatParams } from "../types";
+import type { CenterPathAnimation, Layer, OrientationMode, RepeatParams } from "../types";
 import type { NumericParamKey } from "../canvas/useScene";
 
 interface ControlsProps {
@@ -26,6 +26,13 @@ interface ControlsProps {
   setDragging: (d: boolean) => void;
   onToggleVisible: () => void;
   onToggleLocked: () => void;
+  animationEditable: boolean;
+  drawingMotionPath: boolean;
+  animationPlaying: boolean;
+  onBeginAnimateCenter: () => void;
+  onTogglePlayback: () => void;
+  onDeleteAnimation: () => void;
+  onUpdateAnimation: (patch: (animation: CenterPathAnimation) => CenterPathAnimation) => void;
 }
 
 interface SliderDef {
@@ -118,6 +125,13 @@ export function Controls({
   setDragging,
   onToggleVisible,
   onToggleLocked,
+  animationEditable,
+  drawingMotionPath,
+  animationPlaying,
+  onBeginAnimateCenter,
+  onTogglePlayback,
+  onDeleteAnimation,
+  onUpdateAnimation,
 }: ControlsProps) {
   if (!primary) {
     return (
@@ -135,6 +149,7 @@ export function Controls({
     : primary.name;
   const sliderProps = { primaryParamsRef, applyParamDelta, onCommitDelta, setDragging };
   const p = primary.params;
+  const animation = primary.animation?.type === "centerPath" ? primary.animation : null;
   // The key remounts uncontrolled sliders when the representative changes.
   const bodyKey = allSelected ? "__all__" : primary.id;
 
@@ -240,6 +255,141 @@ export function Controls({
         {SECONDARY_SLIDERS.map((def) => (
           <ContinuousSlider key={def.k} def={def} {...sliderProps} />
         ))}
+
+        <hr />
+        <fieldset className="ctrl animation-ctrl" disabled={!animationEditable}>
+          <legend>Animation</legend>
+          <div className="animation-actions">
+            <button type="button" onClick={onBeginAnimateCenter} className={drawingMotionPath ? "active" : ""}>
+              {animation ? "Draw/Edit Path" : "Animate Center"}
+            </button>
+            <button type="button" onClick={onTogglePlayback} disabled={!animation}>
+              {animationPlaying ? "Pause" : "Play"}
+            </button>
+          </div>
+
+          {animation && (
+            <>
+              <label className="radio">
+                <input
+                  type="checkbox"
+                  checked={animation.enabled}
+                  onChange={(e) =>
+                    onUpdateAnimation((a) => ({ ...a, enabled: e.target.checked }))
+                  }
+                />
+                Enabled
+              </label>
+              <label className="ctrl">
+                <span className="ctrl-label">
+                  Duration<span className="ctrl-val">{animation.durationSeconds.toFixed(1)}s</span>
+                </span>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={20}
+                  step={0.5}
+                  value={animation.durationSeconds}
+                  onChange={(e) =>
+                    onUpdateAnimation((a) => ({ ...a, durationSeconds: parseFloat(e.target.value) }))
+                  }
+                />
+              </label>
+              <label className="ctrl">
+                <span className="ctrl-label">
+                  Delay<span className="ctrl-val">{animation.delaySeconds.toFixed(1)}s</span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={10}
+                  step={0.5}
+                  value={animation.delaySeconds}
+                  onChange={(e) =>
+                    onUpdateAnimation((a) => ({ ...a, delaySeconds: parseFloat(e.target.value) }))
+                  }
+                />
+              </label>
+              <label className="ctrl">
+                <span className="ctrl-label">Easing</span>
+                <select
+                  value={animation.easing}
+                  onChange={(e) =>
+                    onUpdateAnimation((a) => ({
+                      ...a,
+                      easing: e.target.value as CenterPathAnimation["easing"],
+                    }))
+                  }
+                >
+                  <option value="linear">linear</option>
+                  <option value="ease-in-out">ease-in-out</option>
+                  <option value="ease-in">ease-in</option>
+                  <option value="ease-out">ease-out</option>
+                </select>
+              </label>
+              <fieldset className="ctrl">
+                <legend>Direction</legend>
+                {(["out", "out-and-back", "loop"] as CenterPathAnimation["direction"][]).map((value) => (
+                  <label key={value} className="radio">
+                    <input
+                      type="radio"
+                      name="centerPathDirection"
+                      checked={animation.direction === value}
+                      onChange={() =>
+                        onUpdateAnimation((a) => {
+                          const closed = value === "loop" ? true : a.closed;
+                          return {
+                            ...a,
+                            direction: value,
+                            closed,
+                            path: { ...a.path, closed },
+                          };
+                        })
+                      }
+                    />
+                    {value}
+                  </label>
+                ))}
+              </fieldset>
+              <fieldset className="ctrl">
+                <legend>Orientation</legend>
+                {(["fixed", "followPath"] as CenterPathAnimation["orientationMode"][]).map((value) => (
+                  <label key={value} className="radio">
+                    <input
+                      type="radio"
+                      name="centerPathOrientation"
+                      checked={animation.orientationMode === value}
+                      onChange={() => onUpdateAnimation((a) => ({ ...a, orientationMode: value }))}
+                    />
+                    {value === "fixed" ? "Fixed" : "Follow path"}
+                  </label>
+                ))}
+              </fieldset>
+              <label className="radio">
+                <input
+                  type="checkbox"
+                  checked={animation.closed}
+                  onChange={(e) =>
+                    onUpdateAnimation((a) => ({
+                      ...a,
+                      closed: e.target.checked,
+                      path: { ...a.path, closed: e.target.checked },
+                      direction: e.target.checked
+                        ? a.direction
+                        : a.direction === "loop"
+                        ? "out-and-back"
+                        : a.direction,
+                    }))
+                  }
+                />
+                Closed path
+              </label>
+              <button type="button" className="danger" onClick={onDeleteAnimation}>
+                Delete animation
+              </button>
+            </>
+          )}
+        </fieldset>
       </fieldset>
     </div>
   );

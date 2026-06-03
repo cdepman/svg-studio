@@ -7,7 +7,15 @@ import {
   maxAbsScale,
   paintOrder,
   seamHalves,
+  tuckIndices,
 } from "../canvas/repeatMath";
+import {
+  animationPoints,
+  centerPathStyles,
+  instanceMotionStyleText,
+  motionClassName,
+  referenceInstancePoint,
+} from "../motion/centerPath";
 import type { Layer } from "../types";
 
 const EXPORT_MARGIN = 8;
@@ -28,19 +36,43 @@ function layerBounds(layer: Layer) {
   };
 }
 
-function layerMarkup(layer: Layer): string {
+function animatedLayerBounds(layer: Layer) {
+  const b = layerBounds(layer);
+  if (!layer.animation || layer.animation.type !== "centerPath") return b;
+  const { start, end } = animationPoints(layer.animation, referenceInstancePoint(layer));
+  const { params, motif, scale } = layer;
+  const halfDiag = 0.5 * Math.hypot(motif.box.width, motif.box.height) * maxAbsScale(params);
+  const deltaReach = Math.hypot(end.x - start.x, end.y - start.y);
+  const reach = (params.radiusOffset + halfDiag) * scale + deltaReach;
+  return {
+    minX: Math.min(b.minX, layer.center.x - reach),
+    minY: Math.min(b.minY, layer.center.y - reach),
+    maxX: Math.max(b.maxX, layer.center.x + reach),
+    maxY: Math.max(b.maxY, layer.center.y + reach),
+  };
+}
+
+function layerMarkup(layer: Layer, animated: boolean): string {
   const { params, center, motif, id } = layer;
   const motifId = `motif-${id}`;
+  const animatedTuck = params.tuck && animated && !!layer.animation?.enabled;
+  const useTuck = params.tuck && !animatedTuck;
 
-  const useEl = (i: number) =>
-    `      <use href="#${motifId}" transform="${instanceTransform(
-      params,
-      i
-    )}" opacity="${instanceOpacity(params, i)}"/>`;
+  const useEl = (i: number, alt = false) =>
+    `          <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}"${animated ? instanceMotionStyleText(layer, i) : ""}>
+            <g class="instance-placement" transform="${instanceTransform(
+              params,
+              i
+            )}" opacity="${instanceOpacity(params, i)}">
+              <g class="instance-follow-wrapper">
+                <use${alt ? ' class="alt"' : ""} href="#${motifId}"/>
+              </g>
+            </g>
+          </g>`;
 
   let defs = "";
   let body: string;
-  if (params.tuck) {
+  if (useTuck) {
     // Two complementary half-disks (see seamHalves) — seamless, no double-blend.
     const h = seamHalves(params, motif.box);
     const oppClip = `seam-opp-${id}`;
@@ -49,26 +81,31 @@ function layerMarkup(layer: Layer): string {
       `\n    <clipPath id="${oppClip}" clipPathUnits="userSpaceOnUse"><path d="${h.oppHalfD}"/></clipPath>` +
       `\n    <clipPath id="${seamClip}" clipPathUnits="userSpaceOnUse"><path d="${h.seamHalfD}"/></clipPath>`;
     body =
-      `    <g clip-path="url(#${oppClip})">\n${h.oppOrder.map(useEl).join("\n")}\n    </g>\n` +
-      `    <g clip-path="url(#${seamClip})">\n${h.seamOrder.map(useEl).join("\n")}\n    </g>`;
+      `    <g clip-path="url(#${oppClip})">\n${h.oppOrder.map((i) => useEl(i)).join("\n")}\n    </g>\n` +
+      `    <g clip-path="url(#${seamClip})">\n${h.seamOrder.map((i) => useEl(i)).join("\n")}\n    </g>`;
   } else {
-    body = paintOrder(params.count, params.paintOffset).map(useEl).join("\n");
+    const base = paintOrder(params.count, params.paintOffset).map((i) => useEl(i));
+    const tuck = animatedTuck
+      ? tuckIndices(params.count, params.paintOffset, params.seamBlend).map((i) => useEl(i, true))
+      : [];
+    body = [...base, ...tuck].join("\n");
   }
-
-  const tf =
-    layer.scale === 1
-      ? `translate(${center.x},${center.y})`
-      : `translate(${center.x},${center.y}) scale(${layer.scale})`;
 
   return `  <defs>
     <g id="${motifId}" transform="translate(${-motif.anchorX},${-motif.anchorY})">${motif.innerHtml}</g>${defs}
   </defs>
-  <g class="layer" data-layer-id="${id}" transform="${tf}">
+  <g class="layer" data-layer-id="${id}">
+    <g class="layer-center-root" transform="translate(${center.x},${center.y})">
+      <g class="repeat-root">
+        <g class="repeat-scale" transform="scale(${layer.scale})">
 ${body}
+        </g>
+      </g>
+    </g>
   </g>`;
 }
 
-export function buildExportSvg(layers: Layer[]): string {
+function buildSvgFromLayers(layers: Layer[], animated: boolean): string {
   const visible = layers.filter((l) => l.visible);
   if (visible.length === 0) {
     return emptySvg();
@@ -80,7 +117,7 @@ export function buildExportSvg(layers: Layer[]): string {
   let maxX = -Infinity;
   let maxY = -Infinity;
   for (const l of visible) {
-    const b = layerBounds(l);
+    const b = animated ? animatedLayerBounds(l) : layerBounds(l);
     minX = Math.min(minX, b.minX);
     minY = Math.min(minY, b.minY);
     maxX = Math.max(maxX, b.maxX);
@@ -92,14 +129,23 @@ export function buildExportSvg(layers: Layer[]): string {
   const h = maxY - minY + EXPORT_MARGIN * 2;
 
   // Back-to-front = array order.
-  const body = visible.map(layerMarkup).join("\n");
+  const body = visible.map((layer) => layerMarkup(layer, animated)).join("\n");
+  const style = animated ? centerPathStyles(visible, true) : "";
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
-<g transform="translate(${-x},${-y})">
+${style ? `<style>${style}\n</style>\n` : ""}<g transform="translate(${-x},${-y})">
 ${body}
 </g>
 </svg>
 `;
+}
+
+export function buildExportSvg(layers: Layer[]): string {
+  return buildSvgFromLayers(layers, false);
+}
+
+export function buildAnimatedExportSvg(layers: Layer[]): string {
+  return buildSvgFromLayers(layers, true);
 }
 
 export function buildExportSvgFromRenderedLayers(layersRoot: SVGGElement | null): string | null {

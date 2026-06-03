@@ -125,6 +125,37 @@ body {
   fill: none;
 }
 
+.motion-wrapper {
+  transform-box: fill-box;
+}
+.motion-path-line {
+  stroke: #0ea5a4;
+  stroke-width: 2;
+  stroke-dasharray: 8 5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.motion-path-line.closed {
+  stroke-dasharray: 3 4;
+}
+.motion-path-start {
+  fill: #11131a;
+  stroke: #0ea5a4;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.motion-path-end {
+  fill: #fff;
+  stroke: #0ea5a4;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  cursor: grab;
+}
+.motion-path-end:active {
+  cursor: grabbing;
+}
+
 /* marquee (click-drag multi-select) */
 .marquee {
   fill: rgba(224, 69, 123, 0.1);

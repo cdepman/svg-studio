@@ -13,7 +13,20 @@ import { Controls } from "./controls/Controls";
 import { LayersPanel, type MoveDir } from "./layers/LayersPanel";
 import { DEFAULT_MOTIF_SVG } from "./defaultMotif";
 import { importSvgFromFile, importSvgFromText } from "./motif/importSvg";
-import { buildExportSvg, buildExportSvgFromRenderedLayers, downloadSvg } from "./motif/exportSvg";
+import {
+  buildAnimatedExportSvg,
+  buildExportSvg,
+  buildExportSvgFromRenderedLayers,
+  downloadSvg,
+} from "./motif/exportSvg";
+import {
+  animationPoints,
+  centerPathStyles,
+  createCenterPathAnimation,
+  normalizedAnimation,
+  referenceInstancePoint,
+  translateCenterPathAnimation,
+} from "./motion/centerPath";
 import {
   createLayer,
   duplicateLayer,
@@ -28,6 +41,7 @@ import {
   updateLayer,
 } from "./document/layers";
 import type { Center, Layer, Motif, RepeatParams } from "./types";
+import type { CenterPathAnimation } from "./types";
 
 type StateAction<T> = T | ((prev: T) => T);
 
@@ -103,6 +117,8 @@ export default function App() {
   // or select-all all funnel into this). The last entry is the "primary".
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [drawingMotionPath, setDrawingMotionPath] = useState(false);
+  const [animationPlaying, setAnimationPlaying] = useState(false);
   const newLayerCount = useRef(1);
 
   const scene = useScene();
@@ -126,6 +142,21 @@ export default function App() {
   }, [layers, primaryId, editableSelected]);
 
   const gizmo = useMemo(() => unionBounds(editableSelected), [editableSelected]);
+  const animationEditable = !!primary && selectedIds.length === 1 && primary.visible && !primary.locked;
+  const motionCss = useMemo(
+    () => centerPathStyles(layers.filter((l) => l.visible), animationPlaying && !dragging),
+    [layers, animationPlaying, dragging]
+  );
+  const primaryMotionPath = useMemo(() => {
+    if (!primary?.animation || primary.animation.type !== "centerPath") {
+      return drawingMotionPath && primary
+        ? { start: referenceInstancePoint(primary), end: referenceInstancePoint(primary), closed: false }
+        : null;
+    }
+    const animation = normalizedAnimation(primary.animation);
+    const { start, end } = animationPoints(animation, referenceInstancePoint(primary));
+    return { start, end, closed: animation.closed || animation.path.closed };
+  }, [primary, drawingMotionPath]);
 
   // Specs for EVERY editable layer, so grabbing any layer's artwork can move it.
   const allEditable = useMemo(() => layers.filter((l) => l.visible && !l.locked), [layers]);
@@ -141,6 +172,7 @@ export default function App() {
         center: l.center,
         scale: l.scale,
         motifBox: l.motif.box,
+        animation: l.animation,
       })),
     [editableSelected]
   );
@@ -149,7 +181,14 @@ export default function App() {
       new Map<string, DragTargetSpec>(
         allEditable.map((l) => [
           l.id,
-          { id: l.id, params: l.params, center: l.center, scale: l.scale, motifBox: l.motif.box },
+          {
+            id: l.id,
+            params: l.params,
+            center: l.center,
+            scale: l.scale,
+            motifBox: l.motif.box,
+            animation: l.animation,
+          },
         ])
       ),
     [allEditable]
@@ -234,6 +273,18 @@ export default function App() {
     return scene.screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
   }
 
+  function moveLayerWithAnimation(layer: Layer, delta: Center): Layer {
+    return {
+      ...layer,
+      center: { x: layer.center.x + delta.x, y: layer.center.y + delta.y },
+      animation:
+        layer.animation?.type === "centerPath"
+          ? translateCenterPathAnimation(layer.animation, delta)
+          : layer.animation,
+      updatedAt: Date.now(),
+    };
+  }
+
   // --- Editing: absolute (discrete) and delta (continuous) over the selection ---
   const onCommitAbsolute = (partial: Partial<RepeatParams>) => {
     const ids = editableIdsRef.current;
@@ -265,7 +316,7 @@ export default function App() {
         updateLayers((ls) =>
           ls.map((l) =>
             idset.has(l.id)
-              ? { ...l, center: { x: l.center.x + delta.x, y: l.center.y + delta.y }, updatedAt: Date.now() }
+              ? moveLayerWithAnimation(l, delta)
               : l
           )
         );
@@ -343,6 +394,61 @@ export default function App() {
     moveBegin(e, moveIds);
   };
 
+  function updatePrimaryAnimation(patch: (animation: CenterPathAnimation) => CenterPathAnimation) {
+    if (!primaryId) return;
+    updateLayers((ls) =>
+      ls.map((l) => {
+        if (l.id !== primaryId) return l;
+        const current =
+          l.animation?.type === "centerPath" ? l.animation : createCenterPathAnimation(l);
+        return { ...l, animation: patch(current), updatedAt: Date.now() };
+      })
+    );
+  }
+
+  function beginAnimateCenter() {
+    if (!primary || !animationEditable) return;
+    updateLayers((ls) =>
+      ls.map((l) =>
+        l.id === primary.id && !l.animation
+          ? { ...l, animation: createCenterPathAnimation(l), updatedAt: Date.now() }
+          : l
+      )
+    );
+    setDrawingMotionPath(true);
+  }
+
+  function commitMotionPathEnd(end: Center) {
+    if (!primaryId) return;
+    updateLayers((ls) =>
+      ls.map((l) => {
+        if (l.id !== primaryId) return l;
+        const current = l.animation?.type === "centerPath" ? l.animation : createCenterPathAnimation(l, end);
+        const closed = current.direction === "loop" ? true : current.closed;
+        return {
+          ...l,
+          animation: {
+            ...current,
+            closed,
+            path: { ...current.path, points: [referenceInstancePoint(l), end], closed },
+          },
+          updatedAt: Date.now(),
+        };
+      })
+    );
+    setDrawingMotionPath(false);
+  }
+
+  function deletePrimaryAnimation() {
+    if (!primaryId) return;
+    updateLayers((ls) =>
+      ls.map((l) =>
+        l.id === primaryId ? { ...l, animation: undefined, updatedAt: Date.now() } : l
+      )
+    );
+    setDrawingMotionPath(false);
+  }
+
   // --- Layer operations ---
   function addLayerFromMotif(motif: Motif, name: string, params = DEFAULT_PARAMS) {
     const layer = createLayer({ name, motif, params, center: viewportCenterWorld() });
@@ -416,7 +522,13 @@ export default function App() {
   function resetCenter() {
     const ids = editableIdsRef.current;
     const w = viewportCenterWorld();
-    updateLayers((ls) => ls.map((l) => (ids.has(l.id) ? { ...l, center: w, updatedAt: Date.now() } : l)));
+    updateLayers((ls) =>
+      ls.map((l) =>
+        ids.has(l.id)
+          ? moveLayerWithAnimation(l, { x: w.x - l.center.x, y: w.y - l.center.y })
+          : l
+      )
+    );
   }
 
   async function loadFile(file: File) {
@@ -514,6 +626,13 @@ export default function App() {
         <button onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">
           Redo
         </button>
+        <button
+          className={drawingMotionPath ? "active" : ""}
+          onClick={beginAnimateCenter}
+          disabled={!animationEditable}
+        >
+          Animate Center
+        </button>
         <button onClick={onNewLayer}>New Layer</button>
         <button
           className={allSelected ? "active" : ""}
@@ -532,6 +651,9 @@ export default function App() {
           Reset center
         </button>
         <button onClick={onExport}>Export SVG</button>
+        <button onClick={() => downloadSvg(buildAnimatedExportSvg(layers), "radial-repeat-animated.svg")}>
+          Export Animated SVG
+        </button>
         {notice && <span className="notice">{notice}</span>}
       </div>
 
@@ -564,11 +686,16 @@ export default function App() {
             layers={layers}
             selectedIds={selectedSet}
             gizmo={gizmo}
+            motionCss={motionCss}
+            motionPath={primaryMotionPath}
+            drawingMotionPath={drawingMotionPath}
+            animationsMoving={animationPlaying && !dragging}
             viewport={viewport}
             dragging={dragging}
             scene={scene}
             onLayerPointerDown={onLayerPointerDown}
             onMarqueeSelect={onMarqueeSelect}
+            onMotionPathCommit={commitMotionPathEnd}
             onResizePointerDown={onResizePointerDown}
             onDuplicateSelected={onDuplicateSelected}
             onWheel={onWheel}
@@ -589,6 +716,13 @@ export default function App() {
             setDragging={setDragging}
             onToggleVisible={() => primaryId && onToggleVisible(primaryId)}
             onToggleLocked={() => primaryId && onToggleLocked(primaryId)}
+            animationEditable={animationEditable}
+            drawingMotionPath={drawingMotionPath}
+            animationPlaying={animationPlaying}
+            onBeginAnimateCenter={beginAnimateCenter}
+            onTogglePlayback={() => setAnimationPlaying((p) => !p)}
+            onDeleteAnimation={deletePrimaryAnimation}
+            onUpdateAnimation={updatePrimaryAnimation}
           />
         </aside>
       </div>

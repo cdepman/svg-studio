@@ -60,6 +60,29 @@ export interface Center {
   y: number;
 }
 
+export type AnimationEasing = "linear" | "ease-in-out" | "ease-in" | "ease-out";
+export type CenterPathDirection = "out" | "out-and-back" | "loop";
+export type CenterPathOrientation = "fixed" | "followPath";
+
+export interface MotionPath {
+  points: Center[];
+  closed: boolean;
+}
+
+export interface CenterPathAnimation {
+  enabled: boolean;
+  type: "centerPath";
+  path: MotionPath;
+  durationSeconds: number;
+  delaySeconds: number;
+  easing: AnimationEasing;
+  direction: CenterPathDirection;
+  orientationMode: CenterPathOrientation;
+  closed: boolean;
+}
+
+export type LayerAnimation = CenterPathAnimation;
+
 /**
  * A flat layer: one radial-repeat composition. No nesting, no folders. PRD §4.
  * `center` is kept off RepeatParams on purpose so the repeat math stays
@@ -75,6 +98,8 @@ export interface Layer {
   center: Center;
   /** Uniform scale of the whole composition (ring + petals). Resize gizmo. */
   scale: number;
+  /** Optional straight-line center-path animation. */
+  animation?: LayerAnimation;
   createdAt: number;
   updatedAt: number;
 }

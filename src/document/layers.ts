@@ -3,7 +3,7 @@
 // Rendering order: layers[0] = back/bottom, layers[N-1] = front/top.
 // The panel renders this reversed (top row = front). Keep this module pure and
 // unit-tested; it is the source of truth for ordering correctness.
-import type { Center, Layer, Motif, RepeatParams } from "../types";
+import type { Center, Layer, LayerAnimation, Motif, RepeatParams } from "../types";
 
 let idCounter = 0;
 export function newLayerId(): string {
@@ -35,6 +35,17 @@ export function createLayer(opts: {
   };
 }
 
+function cloneAnimation(animation: LayerAnimation | undefined): LayerAnimation | undefined {
+  if (!animation) return undefined;
+  return {
+    ...animation,
+    path: {
+      ...animation.path,
+      points: animation.path.points.map((p) => ({ ...p })),
+    },
+  };
+}
+
 /**
  * Deep-copy a layer for duplication: new id, "{name} copy", independent params
  * and center so edits to the copy never touch the original. Keeps visibility and
@@ -48,6 +59,7 @@ export function duplicateLayer(layer: Layer): Layer {
     name: `${layer.name} copy`,
     params: { ...layer.params },
     center: { ...layer.center },
+    animation: cloneAnimation(layer.animation),
     createdAt: now,
     updatedAt: now,
   };

@@ -15,8 +15,12 @@ import {
   seamHalves,
 } from "./repeatMath";
 import { GIZMO_DUP_GAP, GIZMO_HANDLE } from "../config";
+import {
+  instanceMotionVectorForGeometry,
+  referenceInstancePointForGeometry,
+} from "../motion/centerPath";
 import type { GBounds } from "./selectionBounds";
-import type { Box, Center, RepeatParams } from "../types";
+import type { Box, Center, LayerAnimation, RepeatParams } from "../types";
 
 /** CSS.escape, with a fallback for environments that lack it (e.g. jsdom). Layer
  *  ids are already selector-safe, so the identity fallback is fine. */
@@ -30,6 +34,7 @@ export interface DragTargetSpec {
   center: Center;
   scale: number;
   motifBox: Box;
+  animation?: LayerAnimation;
 }
 
 export interface ResolvedTarget {
@@ -100,7 +105,7 @@ export function useScene(): Scene {
   const repeatRootOf = useCallback(
     (id: string): SVGGElement | null =>
       layersRootRef.current?.querySelector<SVGGElement>(
-        `.layer[data-layer-id="${cssEscape(id)}"] .repeat-root`
+        `.layer[data-layer-id="${cssEscape(id)}"] .layer-center-root`
       ) ?? null,
     []
   );
@@ -166,11 +171,25 @@ export function useScene(): Scene {
         const p: RepeatParams = { ...t.params, [key]: t.params[key] + delta };
         const root = repeatRootOf(t.id);
         if (root) {
-          root.querySelectorAll<SVGUseElement>("use.instance").forEach((u) => {
-            const i = Number(u.dataset.i);
-            u.setAttribute("transform", instanceTransform(p, i));
-            u.setAttribute("opacity", String(instanceOpacity(p, i)));
+          root.querySelectorAll<SVGGElement>(".instance-placement").forEach((g) => {
+            const i = Number(g.dataset.i);
+            g.setAttribute("transform", instanceTransform(p, i));
+            g.setAttribute("opacity", String(instanceOpacity(p, i)));
           });
+          if (t.animation?.enabled) {
+            const fallbackStart = referenceInstancePointForGeometry(p, t.center, t.scale);
+            root.querySelectorAll<SVGGElement>(".instance-motion-wrapper").forEach((g) => {
+              const placement = g.querySelector<SVGGElement>(".instance-placement");
+              const i = Number(placement?.dataset.i);
+              const v = Number.isFinite(i)
+                ? instanceMotionVectorForGeometry(p, t.scale, t.animation, fallbackStart, i)
+                : null;
+              if (!v) return;
+              g.style.setProperty("--motion-dx", `${v.dx}px`);
+              g.style.setProperty("--motion-dy", `${v.dy}px`);
+              g.style.setProperty("--motion-angle", `${v.angle}deg`);
+            });
+          }
         }
         const clips = seamClipsOf(t.id);
         if (clips.opp || clips.seam) {

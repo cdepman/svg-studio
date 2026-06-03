@@ -38,11 +38,16 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       layers={layers}
       selectedIds={selected}
       gizmo={gizmo}
+      motionCss=""
+      motionPath={null}
+      drawingMotionPath={false}
+      animationsMoving={false}
       viewport={{ tx: 0, ty: 0, s: 1 }}
       dragging={false}
       scene={scene}
       onLayerPointerDown={() => {}}
       onMarqueeSelect={() => {}}
+      onMotionPathCommit={() => {}}
       onResizePointerDown={() => {}}
       onDuplicateSelected={() => {}}
       onWheel={() => {}}
