@@ -1,36 +1,38 @@
 // The <svg>, pan/zoom group, the layer stack, and the selection UI.
 //
-// Selection UI (above all artwork, PRD §11):
-//   - a dashed bounding box per selected EDITABLE layer (visible + unlocked),
-//     so the canvas shows what's selected; and
-//   - one combined center handle. Dragging it applies a relative delta to every
-//     selected layer (one layer, or all, in synchrony).
+// There is no center handle: you MOVE a layer by grabbing its artwork and
+// dragging (onLayerPointerDown -> useMoveDrag). The only on-canvas widget is the
+// selection gizmo: a frame around the union of the selected layers, with corner
+// resize handles and a duplicate button.
 import { useEffect, useRef, useState } from "react";
-import { HANDLE_HIT_R, HANDLE_R, isHeavy } from "../config";
+import { GIZMO_DUP_GAP, GIZMO_HANDLE, isHeavy } from "../config";
 import { LayerArt } from "./LayerArt";
 import type { Scene } from "./useScene";
+import type { GBounds } from "./selectionBounds";
 import type { WorldRect } from "../App";
 import type { Center, Layer, Viewport } from "../types";
 
-export interface SelectionBox {
-  id: string;
-  center: Center;
-  reach: number;
-}
+const CORNERS = ["tl", "tr", "bl", "br"] as const;
+const CORNER_CURSOR: Record<string, string> = {
+  tl: "nwse-resize",
+  br: "nwse-resize",
+  tr: "nesw-resize",
+  bl: "nesw-resize",
+};
 
 interface CanvasProps {
   layers: Layer[];
   selectedIds: Set<string>;
-  /** Dashed boxes for selected, editable layers. */
-  boxes: SelectionBox[];
-  /** Combined handle position, or null if nothing editable is selected. */
-  handlePos: Center | null;
+  /** Selection gizmo bounds (union of selected, editable layers), or null. */
+  gizmo: GBounds | null;
   viewport: Viewport;
   dragging: boolean;
   scene: Scene;
-  onSelect: (id: string, additive: boolean) => void;
+  /** Grab a layer's artwork: select-if-needed and begin a move. */
+  onLayerPointerDown: (e: React.PointerEvent, id: string, additive: boolean) => void;
   onMarqueeSelect: (rect: WorldRect, additive: boolean) => void;
-  onCenterPointerDown: (e: React.PointerEvent) => void;
+  onResizePointerDown: (e: React.PointerEvent) => void;
+  onDuplicateSelected: () => void;
   onWheel: (e: React.WheelEvent<SVGSVGElement>) => void;
   panBy: (dx: number, dy: number) => void;
 }
@@ -38,14 +40,14 @@ interface CanvasProps {
 export function Canvas({
   layers,
   selectedIds,
-  boxes,
-  handlePos,
+  gizmo,
   viewport,
   dragging,
   scene,
-  onSelect,
+  onLayerPointerDown,
   onMarqueeSelect,
-  onCenterPointerDown,
+  onResizePointerDown,
+  onDuplicateSelected,
   onWheel,
   panBy,
 }: CanvasProps) {
@@ -92,15 +94,16 @@ export function Canvas({
       return;
     }
     if (e.button !== 0) return;
-    // The center handle (selection-ui) owns its own pointerdown.
-    if ((e.target as Element).closest?.(".center-ui-root")) return;
+    // The gizmo (resize handles + duplicate button) owns its own pointerdowns.
+    if ((e.target as Element).closest?.(".gizmo")) return;
 
-    // Click on a layer's artwork selects it (locked artwork isn't selectable).
+    // Grab on a layer's artwork: select-if-needed and begin a move (locked
+    // artwork is inert).
     const el = (e.target as Element).closest?.(".layer[data-layer-id]");
     const id = el?.getAttribute("data-layer-id");
     if (id) {
       const layer = layers.find((l) => l.id === id);
-      if (layer && !layer.locked) onSelect(id, e.shiftKey);
+      if (layer && !layer.locked) onLayerPointerDown(e, id, e.shiftKey);
       return;
     }
 
@@ -170,24 +173,50 @@ export function Canvas({
               height={marquee.maxY - marquee.minY}
             />
           )}
-          {/* A dashed box per selected, editable layer. */}
-          {boxes.map((b) => (
-            <g key={b.id} className="sel-box" data-sel-for={b.id} transform={`translate(${b.center.x},${b.center.y})`}>
-              <rect x={-b.reach} y={-b.reach} width={2 * b.reach} height={2 * b.reach} fill="none" />
-            </g>
-          ))}
-
-          {/* Single combined center handle. */}
-          {handlePos && (
-            <g
-              ref={scene.centerUiRootRef}
-              className="center-ui-root"
-              transform={`translate(${handlePos.x},${handlePos.y})`}
-            >
-              <line className="center-cross" x1={-HANDLE_R * inv} y1={0} x2={HANDLE_R * inv} y2={0} strokeWidth={1.5 * inv} />
-              <line className="center-cross" x1={0} y1={-HANDLE_R * inv} x2={0} y2={HANDLE_R * inv} strokeWidth={1.5 * inv} />
-              <circle className="center-handle" r={HANDLE_R * inv} strokeWidth={2 * inv} />
-              <circle className="center-hit" r={HANDLE_HIT_R * inv} onPointerDown={onCenterPointerDown} />
+          {/* Selection gizmo: union frame + corner resize handles + a duplicate
+              button. The "meta tool" on the edge of the selection. */}
+          {gizmo && (
+            <g ref={scene.gizmoRef} className="gizmo" transform={`translate(${gizmo.cx},${gizmo.cy})`}>
+              <rect
+                className="gizmo-frame"
+                x={-gizmo.hw}
+                y={-gizmo.hh}
+                width={2 * gizmo.hw}
+                height={2 * gizmo.hh}
+                fill="none"
+              />
+              {CORNERS.map((c) => {
+                const sx = c.includes("r") ? 1 : -1;
+                const sy = c.includes("b") ? 1 : -1;
+                const hs = GIZMO_HANDLE * inv;
+                return (
+                  <rect
+                    key={c}
+                    className="gizmo-handle"
+                    data-corner={c}
+                    x={sx * gizmo.hw - hs / 2}
+                    y={sy * gizmo.hh - hs / 2}
+                    width={hs}
+                    height={hs}
+                    style={{ cursor: CORNER_CURSOR[c] }}
+                    onPointerDown={onResizePointerDown}
+                  />
+                );
+              })}
+              {/* Duplicate button (top-right), drawn in screen px via scale(inv). */}
+              <g
+                className="gizmo-dup"
+                transform={`translate(${gizmo.hw + GIZMO_DUP_GAP * inv},${-gizmo.hh}) scale(${inv})`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDuplicateSelected();
+                }}
+              >
+                <title>Duplicate selection</title>
+                <circle r={11} />
+                <path className="gizmo-plus" d="M -5 0 H 5 M 0 -5 V 5" />
+              </g>
             </g>
           )}
         </g>

@@ -73,6 +73,8 @@ export interface Layer {
   motif: Motif;
   params: RepeatParams;
   center: Center;
+  /** Uniform scale of the whole composition (ring + petals). Resize gizmo. */
+  scale: number;
   createdAt: number;
   updatedAt: number;
 }

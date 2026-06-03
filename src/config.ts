@@ -12,6 +12,11 @@ export const HANDLE_R = 10;
 /** Generous hit radius of the center handle, in screen px. PRD §7. */
 export const HANDLE_HIT_R = 16;
 
+/** Resize-gizmo corner handle size, in screen px. */
+export const GIZMO_HANDLE = 11;
+/** Gap from the gizmo's top-right corner to the duplicate button, screen px. */
+export const GIZMO_DUP_GAP = 16;
+
 export function isHeavy(count: number, motifWeight: number): boolean {
   return count * motifWeight > HEAVY_THRESHOLD;
 }

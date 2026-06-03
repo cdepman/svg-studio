@@ -3,16 +3,17 @@
 // code owns continuous in-gesture deltas for the selected layer(s) and never
 // writes state mid-gesture. PRD §12, §15.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, type SelectionBox } from "./canvas/Canvas";
-import { useCenterDrag } from "./canvas/useCenterDrag";
+import { Canvas } from "./canvas/Canvas";
+import { useMoveDrag } from "./canvas/useMoveDrag";
+import { useResizeDrag } from "./canvas/useResizeDrag";
 import { useScene, type DragTargetSpec, type NumericParamKey } from "./canvas/useScene";
 import { useViewport } from "./canvas/useViewport";
-import { boundsReach } from "./canvas/repeatMath";
+import { layerReach, unionBounds } from "./canvas/selectionBounds";
 import { Controls } from "./controls/Controls";
 import { LayersPanel, type MoveDir } from "./layers/LayersPanel";
 import { DEFAULT_MOTIF_SVG } from "./defaultMotif";
 import { importSvgFromFile, importSvgFromText } from "./motif/importSvg";
-import { buildExportSvg, downloadSvg } from "./motif/exportSvg";
+import { buildExportSvg, buildExportSvgFromRenderedLayers, downloadSvg } from "./motif/exportSvg";
 import {
   createLayer,
   duplicateLayer,
@@ -27,6 +28,19 @@ import {
   updateLayer,
 } from "./document/layers";
 import type { Center, Layer, Motif, RepeatParams } from "./types";
+
+type StateAction<T> = T | ((prev: T) => T);
+
+interface DocumentState {
+  layers: Layer[];
+  selectedIds: string[];
+}
+
+interface HistoryState {
+  past: DocumentState[];
+  present: DocumentState;
+  future: DocumentState[];
+}
 
 export interface WorldRect {
   minX: number;
@@ -59,20 +73,34 @@ const DEFAULT_PARAMS: RepeatParams = {
   seamBlend: 2, // tuck depth: how many copies a petal laps. Small + explicit.
 };
 
+const HISTORY_LIMIT = 100;
+
+function resolveAction<T>(action: StateAction<T>, prev: T): T {
+  return typeof action === "function" ? (action as (prev: T) => T)(prev) : action;
+}
+
+function createInitialDocument(): DocumentState {
+  const layer = createLayer({
+    name: "Radial Repeat 1",
+    motif: importSvgFromText(DEFAULT_MOTIF_SVG),
+    params: DEFAULT_PARAMS,
+    center: { x: 0, y: 0 },
+  });
+  return {
+    layers: [layer],
+    selectedIds: [layer.id],
+  };
+}
+
 export default function App() {
-  const [layers, setLayers] = useState<Layer[]>(() => [
-    createLayer({
-      name: "Radial Repeat 1",
-      motif: importSvgFromText(DEFAULT_MOTIF_SVG),
-      params: DEFAULT_PARAMS,
-      center: { x: 0, y: 0 },
-    }),
-  ]);
+  const [history, setHistory] = useState<HistoryState>(() => ({
+    past: [],
+    present: createInitialDocument(),
+    future: [],
+  }));
+  const { layers, selectedIds } = history.present;
   // Selection is a SET of layer ids (single click, shift-click, marquee drag,
   // or select-all all funnel into this). The last entry is the "primary".
-  const [selectedIds, setSelectedIds] = useState<string[]>(() =>
-    layers[0] ? [layers[0].id] : []
-  );
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const newLayerCount = useRef(1);
@@ -97,38 +125,34 @@ export default function App() {
     return editableSelected[0] ?? p ?? null;
   }, [layers, primaryId, editableSelected]);
 
-  // Combined handle = centroid of the editable selected centers.
-  const handlePos = useMemo<Center | null>(() => {
-    if (editableSelected.length === 0) return null;
-    const sum = editableSelected.reduce(
-      (a, l) => ({ x: a.x + l.center.x, y: a.y + l.center.y }),
-      { x: 0, y: 0 }
-    );
-    return { x: sum.x / editableSelected.length, y: sum.y / editableSelected.length };
-  }, [editableSelected]);
+  const gizmo = useMemo(() => unionBounds(editableSelected), [editableSelected]);
 
-  const boxes = useMemo<SelectionBox[]>(
-    () =>
-      editableSelected.map((l) => ({
-        id: l.id,
-        center: l.center,
-        reach: boundsReach(l.params, l.motif.box),
-      })),
-    [editableSelected]
-  );
+  // Specs for EVERY editable layer, so grabbing any layer's artwork can move it.
+  const allEditable = useMemo(() => layers.filter((l) => l.visible && !l.locked), [layers]);
 
   // --- Keep the imperative side current (read at gesture start) ---
   scene.selectedLayerIdRef.current = primaryId;
-  scene.handlePosRef.current = handlePos ?? { x: 0, y: 0 };
+  scene.invSRef.current = 1 / viewport.s;
   scene.dragTargetsRef.current = useMemo<DragTargetSpec[]>(
     () =>
       editableSelected.map((l) => ({
         id: l.id,
         params: l.params,
         center: l.center,
+        scale: l.scale,
         motifBox: l.motif.box,
       })),
     [editableSelected]
+  );
+  scene.allSpecsRef.current = useMemo(
+    () =>
+      new Map<string, DragTargetSpec>(
+        allEditable.map((l) => [
+          l.id,
+          { id: l.id, params: l.params, center: l.center, scale: l.scale, motifBox: l.motif.box },
+        ])
+      ),
+    [allEditable]
   );
   const primaryParamsRef = useRef<RepeatParams | null>(primary?.params ?? null);
   primaryParamsRef.current = primary?.params ?? null;
@@ -138,6 +162,61 @@ export default function App() {
 
   const docRef = useRef({ layers, selectedIds, primaryId, dragging });
   docRef.current = { layers, selectedIds, primaryId, dragging };
+
+  const commitDocument = (update: (doc: DocumentState) => DocumentState) => {
+    setHistory((h) => {
+      const next = update(h.present);
+      if (next.layers === h.present.layers && next.selectedIds === h.present.selectedIds) {
+        return h;
+      }
+      return {
+        past: [...h.past, h.present].slice(-HISTORY_LIMIT),
+        present: next,
+        future: [],
+      };
+    });
+  };
+
+  const updateLayers = (action: StateAction<Layer[]>) => {
+    commitDocument((doc) => {
+      const nextLayers = resolveAction(action, doc.layers);
+      return nextLayers === doc.layers ? doc : { ...doc, layers: nextLayers };
+    });
+  };
+
+  const updateSelection = (action: StateAction<string[]>) => {
+    setHistory((h) => {
+      const nextSelectedIds = resolveAction(action, h.present.selectedIds);
+      return nextSelectedIds === h.present.selectedIds
+        ? h
+        : { ...h, present: { ...h.present, selectedIds: nextSelectedIds } };
+    });
+  };
+
+  const canUndo = history.past.length > 0;
+  const canRedo = history.future.length > 0;
+  const undo = () => {
+    setHistory((h) => {
+      const previous = h.past[h.past.length - 1];
+      if (!previous) return h;
+      return {
+        past: h.past.slice(0, -1),
+        present: previous,
+        future: [h.present, ...h.future],
+      };
+    });
+  };
+  const redo = () => {
+    setHistory((h) => {
+      const next = h.future[0];
+      if (!next) return h;
+      return {
+        past: [...h.past, h.present].slice(-HISTORY_LIMIT),
+        present: next,
+        future: h.future.slice(1),
+      };
+    });
+  };
 
   // Center the world origin in the viewport once on mount.
   useEffect(() => {
@@ -158,7 +237,7 @@ export default function App() {
   // --- Editing: absolute (discrete) and delta (continuous) over the selection ---
   const onCommitAbsolute = (partial: Partial<RepeatParams>) => {
     const ids = editableIdsRef.current;
-    setLayers((ls) =>
+    updateLayers((ls) =>
       ls.map((l) =>
         ids.has(l.id)
           ? { ...l, params: { ...l.params, ...partial }, updatedAt: Date.now() }
@@ -168,7 +247,7 @@ export default function App() {
   };
   const onCommitDelta = (key: NumericParamKey, delta: number) => {
     const ids = editableIdsRef.current;
-    setLayers((ls) =>
+    updateLayers((ls) =>
       ls.map((l) =>
         ids.has(l.id)
           ? { ...l, params: { ...l.params, [key]: l.params[key] + delta }, updatedAt: Date.now() }
@@ -177,15 +256,15 @@ export default function App() {
     );
   };
 
-  const onCenterPointerDown = useCenterDrag(scene, {
+  const moveBegin = useMoveDrag(scene, {
     onStart: () => setDragging(true),
-    onCommit: (delta) => {
-      const ids = editableIdsRef.current;
-      // Single React commit applying the gesture delta to every dragged layer.
+    onCommit: (ids, delta) => {
+      // Single React commit applying the gesture delta to every grabbed layer.
       if (delta.x !== 0 || delta.y !== 0) {
-        setLayers((ls) =>
+        const idset = new Set(ids);
+        updateLayers((ls) =>
           ls.map((l) =>
-            ids.has(l.id)
+            idset.has(l.id)
               ? { ...l, center: { x: l.center.x + delta.x, y: l.center.y + delta.y }, updatedAt: Date.now() }
               : l
           )
@@ -195,9 +274,36 @@ export default function App() {
     },
   });
 
+  const onResizePointerDown = useResizeDrag(scene, {
+    onStart: () => setDragging(true),
+    onCommit: (factor) => {
+      // After an Option-duplicate the selection is the copies, so this scales the
+      // new layers; otherwise it scales the originals.
+      const ids = editableIdsRef.current;
+      if (factor !== 1) {
+        updateLayers((ls) =>
+          ls.map((l) =>
+            ids.has(l.id) ? { ...l, scale: l.scale * factor, updatedAt: Date.now() } : l
+          )
+        );
+      }
+      setDragging(false);
+    },
+    // Option/Alt at grab: duplicate the selected layers in place and select the
+    // copies, so the resize then continues on the new layers. PRD alt-drag.
+    onDuplicate: () => {
+      const ids = editableIdsRef.current;
+      if (ids.size === 0) return;
+      commitDocument((doc) => {
+        const { layers: next, newIds } = duplicateLayers(doc.layers, new Set(ids));
+        return { layers: next, selectedIds: newIds };
+      });
+    },
+  });
+
   // --- Selection actions ---
   const selectSingle = (id: string, additive = false) => {
-    setSelectedIds((prev) =>
+    updateSelection((prev) =>
       additive
         ? prev.includes(id)
           ? prev.filter((x) => x !== id)
@@ -205,9 +311,9 @@ export default function App() {
         : [id]
     );
   };
-  const selectAll = () => setSelectedIds(layers.map((l) => l.id));
+  const selectAll = () => updateSelection(docRef.current.layers.map((l) => l.id));
   const collapseToPrimary = () =>
-    setSelectedIds((prev) => (prev.length ? [prev[prev.length - 1]] : []));
+    updateSelection((prev) => (prev.length ? [prev[prev.length - 1]] : []));
 
   // Marquee (click-drag) selection: select every visible, unlocked layer whose
   // artwork box intersects the dragged rectangle. Shift adds to the selection.
@@ -217,19 +323,33 @@ export default function App() {
         (l) =>
           l.visible &&
           !l.locked &&
-          boxIntersects(rect, l.center, boundsReach(l.params, l.motif.box))
+          boxIntersects(rect, l.center, layerReach(l.params, l.motif.box, l.scale))
       )
       .map((l) => l.id);
-    setSelectedIds((prev) =>
+    updateSelection((prev) =>
       additive ? Array.from(new Set([...prev, ...hit])) : hit
     );
+  };
+
+  // Grab a layer's artwork: shift toggles selection (no move); otherwise select
+  // it if needed and start moving the (whole) selection.
+  const onLayerPointerDown = (e: React.PointerEvent, id: string, additive: boolean) => {
+    if (additive) {
+      selectSingle(id, true);
+      return;
+    }
+    const moveIds = selectedSet.has(id) ? [...editableIdsRef.current] : [id];
+    if (!selectedSet.has(id)) selectSingle(id);
+    moveBegin(e, moveIds);
   };
 
   // --- Layer operations ---
   function addLayerFromMotif(motif: Motif, name: string, params = DEFAULT_PARAMS) {
     const layer = createLayer({ name, motif, params, center: viewportCenterWorld() });
-    setLayers((ls) => [...ls, layer]);
-    selectSingle(layer.id);
+    commitDocument((doc) => ({
+      layers: [...doc.layers, layer],
+      selectedIds: [layer.id],
+    }));
     return layer;
   }
   function onNewLayer() {
@@ -238,48 +358,50 @@ export default function App() {
     addLayerFromMotif(motif, `Radial Repeat ${newLayerCount.current}`);
   }
   function onDuplicate(id: string) {
-    setLayers((ls) => {
-      const original = ls.find((l) => l.id === id);
-      if (!original) return ls;
+    commitDocument((doc) => {
+      const original = doc.layers.find((l) => l.id === id);
+      if (!original) return doc;
       const copy = duplicateLayer(original);
-      setSelectedIds([copy.id]);
-      return insertAbove(ls, copy, id);
+      return {
+        layers: insertAbove(doc.layers, copy, id),
+        selectedIds: [copy.id],
+      };
     });
   }
   // Duplicate every selected layer at once (the toolbar action + ⌘D). Each copy
   // lands directly above its original; the copies become the new selection.
   function onDuplicateSelected() {
-    const { layers: ls, selectedIds: sel } = docRef.current;
-    if (sel.length === 0) return;
-    const { layers: next, newIds } = duplicateLayers(ls, new Set(sel));
-    setLayers(next);
-    setSelectedIds(newIds);
+    commitDocument((doc) => {
+      if (doc.selectedIds.length === 0) return doc;
+      const { layers: next, newIds } = duplicateLayers(doc.layers, new Set(doc.selectedIds));
+      return { layers: next, selectedIds: newIds };
+    });
   }
   function onDelete(id: string) {
-    setLayers((ls) => {
-      const idx = ls.findIndex((l) => l.id === id);
-      const next = removeLayer(ls, id);
-      setSelectedIds((prev) => {
-        const kept = prev.filter((x) => x !== id);
-        if (kept.length) return kept;
-        const fb = next[Math.min(idx, next.length - 1)];
-        return fb ? [fb.id] : [];
-      });
-      return next;
+    commitDocument((doc) => {
+      const idx = doc.layers.findIndex((l) => l.id === id);
+      if (idx < 0) return doc;
+      const next = removeLayer(doc.layers, id);
+      const kept = doc.selectedIds.filter((x) => x !== id);
+      const fallback = next[Math.min(idx, next.length - 1)];
+      return {
+        layers: next,
+        selectedIds: kept.length ? kept : fallback ? [fallback.id] : [],
+      };
     });
   }
   const onRename = (id: string, name: string) =>
-    setLayers((ls) => updateLayer(ls, id, (l) => ({ ...l, name, updatedAt: Date.now() })));
+    updateLayers((ls) => updateLayer(ls, id, (l) => ({ ...l, name, updatedAt: Date.now() })));
   const onToggleVisible = (id: string) => {
     if (docRef.current.dragging) return; // no visibility changes mid-gesture. PRD §17.
-    setLayers((ls) => updateLayer(ls, id, (l) => ({ ...l, visible: !l.visible, updatedAt: Date.now() })));
+    updateLayers((ls) => updateLayer(ls, id, (l) => ({ ...l, visible: !l.visible, updatedAt: Date.now() })));
   };
   const onToggleLocked = (id: string) => {
     if (docRef.current.dragging) return;
-    setLayers((ls) => updateLayer(ls, id, (l) => ({ ...l, locked: !l.locked, updatedAt: Date.now() })));
+    updateLayers((ls) => updateLayer(ls, id, (l) => ({ ...l, locked: !l.locked, updatedAt: Date.now() })));
   };
   const onMove = (id: string, dir: MoveDir) => {
-    setLayers((ls) => {
+    updateLayers((ls) => {
       switch (dir) {
         case "front": return moveToFront(ls, id);
         case "forward": return moveForward(ls, id);
@@ -289,12 +411,12 @@ export default function App() {
     });
   };
   const onReorder = (draggedId: string, targetId: string) =>
-    setLayers((ls) => reorderByDisplay(ls, draggedId, targetId));
+    updateLayers((ls) => reorderByDisplay(ls, draggedId, targetId));
 
   function resetCenter() {
     const ids = editableIdsRef.current;
     const w = viewportCenterWorld();
-    setLayers((ls) => ls.map((l) => (ids.has(l.id) ? { ...l, center: w, updatedAt: Date.now() } : l)));
+    updateLayers((ls) => ls.map((l) => (ids.has(l.id) ? { ...l, center: w, updatedAt: Date.now() } : l)));
   }
 
   async function loadFile(file: File) {
@@ -308,7 +430,7 @@ export default function App() {
     }
   }
   function onExport() {
-    downloadSvg(buildExportSvg(layers));
+    downloadSvg(buildExportSvgFromRenderedLayers(scene.layersRootRef.current) ?? buildExportSvg(layers));
   }
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -320,6 +442,18 @@ export default function App() {
       const { primaryId: id } = docRef.current;
       const mod = e.metaKey || e.ctrlKey;
 
+      if (typing) return;
+      if (mod && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+        return;
+      }
       if (mod && e.key.toLowerCase() === "a") {
         e.preventDefault();
         selectAll();
@@ -334,7 +468,7 @@ export default function App() {
         onDuplicateSelected();
         return;
       }
-      if ((e.key === "Delete" || e.key === "Backspace") && !typing) {
+      if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         if (id) onDelete(id);
         return;
@@ -374,6 +508,12 @@ export default function App() {
             e.target.value = "";
           }}
         />
+        <button onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">
+          Undo
+        </button>
+        <button onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">
+          Redo
+        </button>
         <button onClick={onNewLayer}>New Layer</button>
         <button
           className={allSelected ? "active" : ""}
@@ -423,14 +563,14 @@ export default function App() {
           <Canvas
             layers={layers}
             selectedIds={selectedSet}
-            boxes={boxes}
-            handlePos={handlePos}
+            gizmo={gizmo}
             viewport={viewport}
             dragging={dragging}
             scene={scene}
-            onSelect={selectSingle}
+            onLayerPointerDown={onLayerPointerDown}
             onMarqueeSelect={onMarqueeSelect}
-            onCenterPointerDown={onCenterPointerDown}
+            onResizePointerDown={onResizePointerDown}
+            onDuplicateSelected={onDuplicateSelected}
             onWheel={onWheel}
             panBy={panBy}
           />
@@ -461,7 +601,7 @@ export default function App() {
         ) : (
           primary && <span>Sel: {primary.name}</span>
         )}
-        <span className="hint">drag empty canvas = marquee select · shift = add · ⌘A all · space/middle = pan</span>
+        <span className="hint">⌘Z undo · ⌘⇧Z redo · ⌘A all · drag empty canvas = marquee select · space/middle = pan</span>
       </div>
     </div>
   );

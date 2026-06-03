@@ -92,15 +92,37 @@ body {
   touch-action: none; /* let pointer events drive pan/zoom/drag */
   cursor: default;
 }
+/* grab artwork to move it */
+.layers-root .layer {
+  cursor: move;
+}
 
-/* selection bounding box. non-scaling-stroke keeps the outline a constant
-   screen width regardless of zoom, while the box itself scales with content. */
-.sel-box rect {
+/* selection gizmo. non-scaling-stroke keeps outlines a constant screen width
+   regardless of zoom, while geometry scales with content. */
+.gizmo-frame {
   stroke: var(--accent);
   stroke-width: 1.5;
   stroke-dasharray: 6 4;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
+}
+.gizmo-handle {
+  fill: #fff;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.gizmo-dup {
+  cursor: copy;
+}
+.gizmo-dup circle {
+  fill: var(--accent);
+}
+.gizmo-dup .gizmo-plus {
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  fill: none;
 }
 
 /* marquee (click-drag multi-select) */

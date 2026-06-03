@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildExportSvg } from "./exportSvg";
+import {
+  buildExportSvg,
+  buildExportSvgFromRenderedLayers,
+  ensureSvgFilename,
+} from "./exportSvg";
 import { createLayer } from "../document/layers";
 import type { Layer, Motif, RepeatParams } from "../types";
 
@@ -58,10 +62,52 @@ describe("buildExportSvg (PRD §14)", () => {
     expect((svg.match(/<use /g) ?? []).length).toBe(4); // count 4, no tuck
   });
 
+  it("normalizes the document canvas to a positive origin for thumbnail renderers", () => {
+    const a = mk({ id: "a", center: { x: -100, y: -50 } });
+    const svg = buildExportSvg([a]);
+    expect(svg).toContain('viewBox="0 0 ');
+    expect(svg).toContain('<g transform="translate(');
+  });
+
   it("returns an empty (but valid) svg when nothing is visible", () => {
     const a = mk({ id: "a", visible: false });
     const svg = buildExportSvg([a]);
     expect(svg).toContain("<svg");
     expect(svg).not.toContain("<use");
+  });
+
+  it("can snapshot the currently rendered layer transforms from the canvas", () => {
+    const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const root = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const layer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const repeatRoot = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+
+    root.classList.add("layers-root");
+    layer.classList.add("layer");
+    layer.setAttribute("data-layer-id", "a");
+    repeatRoot.classList.add("repeat-root");
+    repeatRoot.setAttribute("transform", "translate(25,30)");
+    use.setAttribute("href", "#motif-a");
+
+    repeatRoot.appendChild(use);
+    layer.appendChild(repeatRoot);
+    root.appendChild(layer);
+    svgEl.appendChild(root);
+    Object.defineProperty(root, "getBBox", {
+      value: () => ({ x: -10, y: 20, width: 100, height: 80 }),
+    });
+
+    const svg = buildExportSvgFromRenderedLayers(root);
+    expect(svg).toContain('viewBox="0 0 116 96"');
+    expect(svg).toContain('<g transform="translate(18,-12)">');
+    expect(svg).toContain('data-layer-id="a"');
+    expect(svg).toContain('transform="translate(25,30)"');
+  });
+
+  it("forces downloaded filenames to keep an .svg extension", () => {
+    expect(ensureSvgFilename("radial-repeat-004")).toBe("radial-repeat-004.svg");
+    expect(ensureSvgFilename("radial-repeat-004.SVG")).toBe("radial-repeat-004.SVG");
+    expect(ensureSvgFilename("  ")).toBe("radial-repeat.svg");
   });
 });

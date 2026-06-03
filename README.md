@@ -45,9 +45,15 @@ row, or `⌘[` / `⌘]`, `⌘⇧[` / `⌘⇧]`), toggle visibility and lock. `la
 back; the panel renders reversed (top row = front). Export walks visible layers
 back-to-front. See `src/document/layers.ts` (pure, unit-tested).
 
-**Selection is shown on the canvas:** a dashed accent bounding box is drawn
-around each selected, *editable* (visible + unlocked) layer, plus the single
-center handle. A locked/hidden selected layer shows in the panel only.
+**Selection gizmo (the on-canvas meta tool):** a dashed accent frame wraps the
+*union* of the selected, editable layers, with four corner **resize handles** and
+a **duplicate button** ("+", top-right). Resize is a uniform scale about the
+selection's union center — stored per layer as `scale` and applied via a
+`repeat-scale` group *inside* `repeat-root`, so the center-drag path is untouched
+and the whole composition (ring + petals) scales. The gizmo updates imperatively
+during center drags (translate), param drags (re-fit), and resizes (scale), with
+zero React commits on `pointermove`. A locked/hidden selected layer shows in the
+panel only.
 
 **Marquee multi-select:** drag on empty canvas to rubber-band a rectangle;
 every visible, unlocked layer whose artwork box it touches is selected (shift to

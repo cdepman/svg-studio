@@ -160,9 +160,12 @@ export function Controls({
       </div>
 
       <fieldset className="controls-body" disabled={!editable} key={bodyKey}>
+        {/* Count is per-layer structure; across a multi-selection the layers can
+            have different counts, so don't pretend there's one value — disable it
+            and blank the readout. Edit count one layer at a time. */}
         <label className="ctrl">
           <span className="ctrl-label">
-            Count<span className="ctrl-val">{p.count}</span>
+            Count<span className="ctrl-val">{selectionCount > 1 ? "—" : p.count}</span>
           </span>
           <input
             type="range"
@@ -170,6 +173,7 @@ export function Controls({
             max={128}
             step={1}
             value={p.count}
+            disabled={selectionCount > 1}
             onChange={(e) => onCommitAbsolute({ count: parseInt(e.target.value, 10) })}
           />
         </label>

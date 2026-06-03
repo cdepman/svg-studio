@@ -16,6 +16,7 @@ export function createLayer(opts: {
   motif: Motif;
   params: RepeatParams;
   center: Center;
+  scale?: number;
   visible?: boolean;
   locked?: boolean;
 }): Layer {
@@ -28,6 +29,7 @@ export function createLayer(opts: {
     motif: opts.motif, // motif markup is immutable, safe to share
     params: { ...opts.params },
     center: { ...opts.center },
+    scale: opts.scale ?? 1,
     createdAt: now,
     updatedAt: now,
   };

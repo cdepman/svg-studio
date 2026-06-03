@@ -29,6 +29,11 @@ const click = (el: Element | null | undefined) =>
     el?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
 
+const keydown = (key: string, init: KeyboardEventInit = {}) =>
+  act(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
+  });
+
 const button = (text: string) =>
   Array.from(container.querySelectorAll("button")).find(
     (b) => b.textContent?.trim() === text
@@ -40,8 +45,8 @@ const canvasLayerIds = () =>
   Array.from(canvas().querySelectorAll("[data-layer-id]")).map((e) =>
     e.getAttribute("data-layer-id")
   );
-const selBoxes = () => canvas().querySelectorAll(".sel-box");
-const handles = () => canvas().querySelectorAll(".center-handle");
+const gizmos = () => canvas().querySelectorAll(".gizmo");
+const resizeHandles = () => canvas().querySelectorAll(".gizmo-handle");
 // one pass only (the tuck renders the ring as two half-disk passes; the second
 // carries .alt) so this counts logical copies per layer.
 const instances = () => canvas().querySelectorAll("use.instance:not(.alt)");
@@ -74,10 +79,14 @@ describe("App layer interactions", () => {
     expect(rows()[0].className).toContain("selected");
   });
 
-  it("Duplicate adds a copy named '<name> copy'", () => {
+  it("Duplicate adds a copy named '<name> copy' and selects the new layer", () => {
     click(button("Duplicate"));
     expect(rows()).toHaveLength(2);
     expect(container.textContent).toContain("Radial Repeat 1 copy");
+    // top row = front = the copy; it is selected, the original is not
+    expect(rows()[0].textContent).toContain("Radial Repeat 1 copy");
+    expect(rows()[0].className).toContain("selected");
+    expect(rows()[1].className).not.toContain("selected");
   });
 
   it("Duplicate acts on the whole selection when multiple are selected", () => {
@@ -88,6 +97,39 @@ describe("App layer interactions", () => {
     // the two copies are now selected
     const selected = Array.from(rows()).filter((r) => r.className.includes("selected"));
     expect(selected).toHaveLength(2);
+  });
+
+  it("Undo and Redo buttons revert and restore document edits", () => {
+    expect((button("Undo") as HTMLButtonElement).disabled).toBe(true);
+    expect((button("Redo") as HTMLButtonElement).disabled).toBe(true);
+
+    click(button("New Layer"));
+    expect(rows()).toHaveLength(2);
+    expect((button("Undo") as HTMLButtonElement).disabled).toBe(false);
+
+    click(button("Undo"));
+    expect(rows()).toHaveLength(1);
+    expect((button("Redo") as HTMLButtonElement).disabled).toBe(false);
+
+    click(button("Redo"));
+    expect(rows()).toHaveLength(2);
+  });
+
+  it("keyboard undo and redo shortcuts use the current document state", () => {
+    click(button("New Layer"));
+    expect(rows()).toHaveLength(2);
+
+    keydown("z", { metaKey: true });
+    expect(rows()).toHaveLength(1);
+
+    keydown("z", { metaKey: true, shiftKey: true });
+    expect(rows()).toHaveLength(2);
+
+    keydown("z", { ctrlKey: true });
+    expect(rows()).toHaveLength(1);
+
+    keydown("y", { ctrlKey: true });
+    expect(rows()).toHaveLength(2);
   });
 
   it("hiding a layer removes it from the canvas but keeps the panel row", () => {
@@ -110,19 +152,59 @@ describe("App layer interactions", () => {
     click(button("Select All"));
     // both rows selected
     expect(Array.from(rows()).every((r) => r.className.includes("selected"))).toBe(true);
-    // a dashed box per layer, one combined handle
-    expect(selBoxes()).toHaveLength(2);
-    expect(handles()).toHaveLength(1);
+    // one union gizmo wraps the whole selection, with four resize handles
+    expect(gizmos()).toHaveLength(1);
+    expect(resizeHandles()).toHaveLength(4);
     expect(container.textContent).toContain("All layers (2)");
   });
 
-  it("a discrete param edit while All-selected applies to every layer in synchrony", () => {
-    click(button("New Layer")); // 2 layers, default count 12 each
+  it("count edits a single layer, and is disabled (blank) for a multi-selection", () => {
+    const countInput = () => container.querySelector(".controls-body input[type=range]") as HTMLInputElement;
+    // single selection: count works
+    expect(instances()).toHaveLength(12);
+    expect(countInput().disabled).toBe(false);
+    setRange(countInput(), 6);
+    expect(instances()).toHaveLength(6);
+
+    // select two -> count is disabled and shows no value
+    click(button("New Layer"));
     click(button("Select All"));
-    expect(instances()).toHaveLength(24); // 2 * 12
-    // first range in the controls body is Count
-    const countInput = container.querySelector(".controls-body input[type=range]")!;
-    setRange(countInput, 6);
-    expect(instances()).toHaveLength(12); // 2 * 6 -> applied to both
+    expect(countInput().disabled).toBe(true);
+    const countVal = container.querySelector(".controls-body .ctrl-val")!;
+    expect(countVal.textContent).toBe("—");
+  });
+
+  it("grabbing a layer's artwork and dragging moves its center", () => {
+    const repeatRoot = () => canvas().querySelector(".layer .repeat-root")!;
+    expect(repeatRoot().getAttribute("transform")).toBe("translate(0,0)");
+
+    const art = canvas().querySelector(".layer use.instance")!;
+    // jsdom has no PointerEvent; MouseEvent with a pointer type name still drives
+    // the handlers (they only read clientX/clientY). No CTM => world == client.
+    const pd = new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 100, button: 0 });
+    act(() => art.dispatchEvent(pd));
+    act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 130, clientY: 150 })));
+
+    // commit applies delta (30,50) to the layer center
+    expect(repeatRoot().getAttribute("transform")).toBe("translate(30,50)");
+  });
+
+  it("Option + dragging a resize handle duplicates and resizes the copy", () => {
+    expect(rows()).toHaveLength(1);
+    const handle = canvas().querySelector(".gizmo-handle")!;
+    // anchor = union center (0,0); startDist=100, end dist=250 => factor 2.5
+    act(() =>
+      handle.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 0, button: 0, altKey: true })
+      )
+    );
+    act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 250, clientY: 0 })));
+
+    expect(rows()).toHaveLength(2); // duplicated
+    const scales = Array.from(canvas().querySelectorAll(".repeat-scale")).map((e) =>
+      e.getAttribute("transform")
+    );
+    expect(scales).toContain("scale(1)"); // original untouched
+    expect(scales).toContain("scale(2.5)"); // copy resized
   });
 });

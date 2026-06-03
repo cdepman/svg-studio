@@ -66,19 +66,23 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
         )}
       </defs>
 
-      {/* repeat-root: its transform changes during this layer's center drag. */}
+      {/* repeat-root: its translate changes during this layer's center drag.
+          repeat-scale: its scale changes during a resize. Kept separate so the
+          two gestures never fight over one transform. */}
       <g className="repeat-root" transform={`translate(${layer.center.x},${layer.center.y})`}>
-        {halves ? (
-          <>
-            {/* Half opposite the seam: normal order (its seam is excluded here). */}
-            <g clipPath={`url(#${oppClipId})`}>{halves.oppOrder.map((i) => Use(i))}</g>
-            {/* Half containing the seam: order rotated 180° (its seam is on the
-                far side, excluded here). Complementary clips => no double-blend. */}
-            <g clipPath={`url(#${seamClipId})`}>{halves.seamOrder.map((i) => Use(i, true))}</g>
-          </>
-        ) : (
-          (proxy ? subsetIndices(p.count, PROXY_CAP) : paintOrder(p.count, p.paintOffset)).map((i) => Use(i))
-        )}
+        <g className="repeat-scale" transform={`scale(${layer.scale})`}>
+          {halves ? (
+            <>
+              {/* Half opposite the seam: normal order (its seam is excluded here). */}
+              <g clipPath={`url(#${oppClipId})`}>{halves.oppOrder.map((i) => Use(i))}</g>
+              {/* Half containing the seam: order rotated 180° (its seam is on the
+                  far side, excluded here). Complementary clips => no double-blend. */}
+              <g clipPath={`url(#${seamClipId})`}>{halves.seamOrder.map((i) => Use(i, true))}</g>
+            </>
+          ) : (
+            (proxy ? subsetIndices(p.count, PROXY_CAP) : paintOrder(p.count, p.paintOffset)).map((i) => Use(i))
+          )}
+        </g>
       </g>
     </g>
   );

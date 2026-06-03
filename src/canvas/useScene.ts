@@ -4,10 +4,9 @@
 //   in-gesture deltas: during a drag it mutates the SELECTED layers' DOM
 //   attributes directly and React does NOT re-render.
 //
-// Selection can be a single layer OR all layers (synchronized manipulation).
-// Either way the imperative code operates over a "drag target" set that App
-// keeps current. Center drags and slider drags both apply a RELATIVE DELTA to
-// every target, preserving the differences between layers.
+// The selection is shown by ONE union "gizmo" (frame + resize handles + a
+// duplicate button). Center drags, param drags, and resizes all update it
+// imperatively.
 import { useCallback, useMemo, useRef } from "react";
 import {
   boundsReach,
@@ -15,20 +14,32 @@ import {
   instanceTransform,
   seamHalves,
 } from "./repeatMath";
+import { GIZMO_DUP_GAP, GIZMO_HANDLE } from "../config";
+import type { GBounds } from "./selectionBounds";
 import type { Box, Center, RepeatParams } from "../types";
+
+/** CSS.escape, with a fallback for environments that lack it (e.g. jsdom). Layer
+ *  ids are already selector-safe, so the identity fallback is fine. */
+const cssEscape = (s: string): string =>
+  typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : s;
 
 /** A layer eligible for synchronized manipulation (visible + unlocked). */
 export interface DragTargetSpec {
   id: string;
   params: RepeatParams;
   center: Center;
+  scale: number;
   motifBox: Box;
 }
 
 export interface ResolvedTarget {
+  id: string;
   repeatRoot: SVGGElement | null;
-  selBox: SVGGElement | null;
+  repeatScale: SVGGElement | null;
   startCenter: Center;
+  startScale: number;
+  /** Unscaled artwork half-extent, for live union recompute during resize. */
+  baseReach: number;
 }
 
 export type NumericParamKey =
@@ -42,37 +53,36 @@ export interface Scene {
   svgRef: React.RefObject<SVGSVGElement>;
   panZoomRef: React.RefObject<SVGGElement>;
   layersRootRef: React.RefObject<SVGGElement>;
-  /** The single combined center handle (renders above all artwork). */
-  centerUiRootRef: React.RefObject<SVGGElement>;
+  /** The selection gizmo group (frame + handles + duplicate button). */
+  gizmoRef: React.RefObject<SVGGElement>;
 
-  /** App keeps this current: the editable, currently-selected layers. */
   dragTargetsRef: React.MutableRefObject<DragTargetSpec[]>;
-  /** Committed position of the combined handle (single center or centroid). */
-  handlePosRef: React.MutableRefObject<Center>;
-  /** Primary selected layer id, for single-layer commits/queries in App. */
+  /** Specs for ALL editable layers (by id), so a move can target any grabbed
+   *  layer — not just the currently-selected ones. */
+  allSpecsRef: React.MutableRefObject<Map<string, DragTargetSpec>>;
   selectedLayerIdRef: React.MutableRefObject<string | null>;
+  /** 1 / viewport scale, so screen-sized handles can be drawn in world units. */
+  invSRef: React.MutableRefObject<number>;
 
   screenToWorld: (clientX: number, clientY: number) => Center;
+  /** Resolve a layer's repeat-root <g> by id (exists for every visible layer). */
+  resolveRepeatRoot: (id: string) => SVGGElement | null;
 
-  /** Resolve DOM nodes for the current drag targets (called at pointerdown). */
   collectDragTargets: () => ResolvedTarget[];
-
-  /**
-   * Apply a relative delta to one numeric param across every drag target,
-   * imperatively (instances + seam wedge + selection box). O(N·L) per frame,
-   * no React render. PRD §12, §15.
-   */
   applyParamDelta: (key: NumericParamKey, delta: number) => void;
+  /** Re-lay the gizmo frame/handles/button from union bounds (imperative). */
+  applyGizmo: (b: GBounds) => void;
 }
 
 export function useScene(): Scene {
   const svgRef = useRef<SVGSVGElement>(null);
   const panZoomRef = useRef<SVGGElement>(null);
   const layersRootRef = useRef<SVGGElement>(null);
-  const centerUiRootRef = useRef<SVGGElement>(null);
+  const gizmoRef = useRef<SVGGElement>(null);
   const dragTargetsRef = useRef<DragTargetSpec[]>([]);
-  const handlePosRef = useRef<Center>({ x: 0, y: 0 });
+  const allSpecsRef = useRef<Map<string, DragTargetSpec>>(new Map());
   const selectedLayerIdRef = useRef<string | null>(null);
+  const invSRef = useRef(1);
 
   const screenToWorld = useCallback((clientX: number, clientY: number): Center => {
     const g = panZoomRef.current;
@@ -87,24 +97,24 @@ export function useScene(): Scene {
     return { x: world.x, y: world.y };
   }, []);
 
-  const repeatRootOf = useCallback((id: string): SVGGElement | null => {
-    return (
+  const repeatRootOf = useCallback(
+    (id: string): SVGGElement | null =>
       layersRootRef.current?.querySelector<SVGGElement>(
-        `.layer[data-layer-id="${CSS.escape(id)}"] .repeat-root`
-      ) ?? null
-    );
-  }, []);
-  const selBoxOf = useCallback((id: string): SVGGElement | null => {
-    return (
-      svgRef.current?.querySelector<SVGGElement>(
-        `.sel-box[data-sel-for="${CSS.escape(id)}"]`
-      ) ?? null
-    );
-  }, []);
+        `.layer[data-layer-id="${cssEscape(id)}"] .repeat-root`
+      ) ?? null,
+    []
+  );
+  const repeatScaleOf = useCallback(
+    (id: string): SVGGElement | null =>
+      layersRootRef.current?.querySelector<SVGGElement>(
+        `.layer[data-layer-id="${cssEscape(id)}"] .repeat-scale`
+      ) ?? null,
+    []
+  );
   const seamClipsOf = useCallback(
     (id: string): { opp: SVGPathElement | null; seam: SVGPathElement | null } => {
       const svg = svgRef.current;
-      const esc = CSS.escape(id);
+      const esc = cssEscape(id);
       return {
         opp: svg?.querySelector<SVGPathElement>(`path[data-seam-opp-for="${esc}"]`) ?? null,
         seam: svg?.querySelector<SVGPathElement>(`path[data-seam-half-for="${esc}"]`) ?? null,
@@ -113,16 +123,45 @@ export function useScene(): Scene {
     []
   );
 
-  const collectDragTargets = useCallback((): ResolvedTarget[] => {
-    return dragTargetsRef.current.map((t) => ({
-      repeatRoot: repeatRootOf(t.id),
-      selBox: selBoxOf(t.id),
-      startCenter: t.center,
-    }));
-  }, [repeatRootOf, selBoxOf]);
+  const collectDragTargets = useCallback(
+    (): ResolvedTarget[] =>
+      dragTargetsRef.current.map((t) => ({
+        id: t.id,
+        repeatRoot: repeatRootOf(t.id),
+        repeatScale: repeatScaleOf(t.id),
+        startCenter: t.center,
+        startScale: t.scale,
+        baseReach: boundsReach(t.params, t.motifBox),
+      })),
+    [repeatRootOf, repeatScaleOf]
+  );
+
+  const applyGizmo = useCallback((b: GBounds) => {
+    const g = gizmoRef.current;
+    if (!g) return;
+    const inv = invSRef.current;
+    g.setAttribute("transform", `translate(${b.cx},${b.cy})`);
+    const frame = g.querySelector(".gizmo-frame");
+    frame?.setAttribute("x", String(-b.hw));
+    frame?.setAttribute("y", String(-b.hh));
+    frame?.setAttribute("width", String(2 * b.hw));
+    frame?.setAttribute("height", String(2 * b.hh));
+    const hs = GIZMO_HANDLE * inv;
+    g.querySelectorAll<SVGRectElement>(".gizmo-handle").forEach((h) => {
+      const sx = h.dataset.corner?.includes("r") ? 1 : -1;
+      const sy = h.dataset.corner?.includes("b") ? 1 : -1;
+      h.setAttribute("x", String(sx * b.hw - hs / 2));
+      h.setAttribute("y", String(sy * b.hh - hs / 2));
+      h.setAttribute("width", String(hs));
+      h.setAttribute("height", String(hs));
+    });
+    const dup = g.querySelector(".gizmo-dup");
+    dup?.setAttribute("transform", `translate(${b.hw + GIZMO_DUP_GAP * inv},${-b.hh}) scale(${inv})`);
+  }, []);
 
   const applyParamDelta = useCallback(
     (key: NumericParamKey, delta: number) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const t of dragTargetsRef.current) {
         const p: RepeatParams = { ...t.params, [key]: t.params[key] + delta };
         const root = repeatRootOf(t.id);
@@ -133,24 +172,28 @@ export function useScene(): Scene {
             u.setAttribute("opacity", String(instanceOpacity(p, i)));
           });
         }
-        // Rotate/scale both seam half-clips live (they depend on angle/radius).
         const clips = seamClipsOf(t.id);
         if (clips.opp || clips.seam) {
           const h = seamHalves(p, t.motifBox);
           clips.opp?.setAttribute("d", h.oppHalfD);
           clips.seam?.setAttribute("d", h.seamHalfD);
         }
-        const box = selBoxOf(t.id)?.querySelector("rect");
-        if (box) {
-          const r = boundsReach(p, t.motifBox);
-          box.setAttribute("x", String(-r));
-          box.setAttribute("y", String(-r));
-          box.setAttribute("width", String(2 * r));
-          box.setAttribute("height", String(2 * r));
-        }
+        const reach = boundsReach(p, t.motifBox) * t.scale;
+        minX = Math.min(minX, t.center.x - reach);
+        minY = Math.min(minY, t.center.y - reach);
+        maxX = Math.max(maxX, t.center.x + reach);
+        maxY = Math.max(maxY, t.center.y + reach);
+      }
+      if (Number.isFinite(minX)) {
+        applyGizmo({
+          cx: (minX + maxX) / 2,
+          cy: (minY + maxY) / 2,
+          hw: (maxX - minX) / 2,
+          hh: (maxY - minY) / 2,
+        });
       }
     },
-    [repeatRootOf, seamClipsOf, selBoxOf]
+    [repeatRootOf, seamClipsOf, applyGizmo]
   );
 
   return useMemo(
@@ -158,14 +201,17 @@ export function useScene(): Scene {
       svgRef,
       panZoomRef,
       layersRootRef,
-      centerUiRootRef,
+      gizmoRef,
       dragTargetsRef,
-      handlePosRef,
+      allSpecsRef,
       selectedLayerIdRef,
+      invSRef,
       screenToWorld,
+      resolveRepeatRoot: repeatRootOf,
       collectDragTargets,
       applyParamDelta,
+      applyGizmo,
     }),
-    [screenToWorld, collectDragTargets, applyParamDelta]
+    [screenToWorld, repeatRootOf, collectDragTargets, applyParamDelta, applyGizmo]
   );
 }

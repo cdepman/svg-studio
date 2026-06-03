@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
-import { Canvas, type SelectionBox } from "./Canvas";
+import { Canvas } from "./Canvas";
 import { useScene } from "./useScene";
-import { boundsReach } from "./repeatMath";
+import { unionBounds } from "./selectionBounds";
 import { importSvgFromText } from "../motif/importSvg";
 import { DEFAULT_MOTIF_SVG } from "../defaultMotif";
 import { createLayer } from "../document/layers";
-import type { Center, Layer, RepeatParams } from "../types";
+import type { Layer, RepeatParams } from "../types";
 
 const params: RepeatParams = {
   count: 8,
@@ -29,41 +29,29 @@ function layer(overrides: Partial<Layer> = {}): Layer {
   };
 }
 
-// Mirror App's derivation of the editable-selected set -> boxes/handle.
-function derive(layers: Layer[], selected: Set<string>) {
-  const editable = layers.filter((l) => selected.has(l.id) && l.visible && !l.locked);
-  const boxes: SelectionBox[] = editable.map((l) => ({ id: l.id, center: l.center, reach: boundsReach(l.params, l.motif.box) }));
-  const handlePos: Center | null = editable.length
-    ? {
-        x: editable.reduce((a, l) => a + l.center.x, 0) / editable.length,
-        y: editable.reduce((a, l) => a + l.center.y, 0) / editable.length,
-      }
-    : null;
-  return { boxes, handlePos };
-}
-
 function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) {
   const scene = useScene();
-  const { boxes, handlePos } = derive(layers, selected);
+  const editable = layers.filter((l) => selected.has(l.id) && l.visible && !l.locked);
+  const gizmo = unionBounds(editable);
   return (
     <Canvas
       layers={layers}
       selectedIds={selected}
-      boxes={boxes}
-      handlePos={handlePos}
+      gizmo={gizmo}
       viewport={{ tx: 0, ty: 0, s: 1 }}
       dragging={false}
       scene={scene}
-      onSelect={() => {}}
+      onLayerPointerDown={() => {}}
       onMarqueeSelect={() => {}}
-      onCenterPointerDown={() => {}}
+      onResizePointerDown={() => {}}
+      onDuplicateSelected={() => {}}
       onWheel={() => {}}
       panBy={() => {}}
     />
   );
 }
 
-describe("Canvas layer stack + selection", () => {
+describe("Canvas layer stack + selection gizmo", () => {
   it("renders only visible layers, back-to-front", () => {
     const a = layer({ id: "a" });
     const b = layer({ id: "b", visible: false });
@@ -72,29 +60,26 @@ describe("Canvas layer stack + selection", () => {
     expect(html).not.toContain('data-layer-id="b"');
   });
 
-  it("draws a selection box + handle for a selected, editable layer", () => {
+  it("draws the gizmo (frame + handles + dup) for an editable selection", () => {
     const a = layer({ id: "a" });
     const html = renderToString(<Host layers={[a]} selected={new Set(["a"])} />);
-    expect(html).toContain('data-sel-for="a"');
-    expect(html).toContain("center-handle");
+    expect(html).toContain("gizmo-frame");
+    expect((html.match(/gizmo-handle/g) ?? []).length).toBe(4);
+    expect(html).toContain("gizmo-dup");
   });
 
-  it("draws no box/handle for a selected locked layer (art still shows)", () => {
+  it("draws no gizmo for a selected locked layer (art still shows)", () => {
     const a = layer({ id: "a", locked: true });
     const html = renderToString(<Host layers={[a]} selected={new Set(["a"])} />);
-    expect(html).toContain('data-layer-id="a"'); // artwork rendered
-    expect(html).not.toContain('data-sel-for="a"'); // not editable -> no box
-    expect(html).not.toContain("center-handle");
+    expect(html).toContain('data-layer-id="a"');
+    expect(html).not.toContain("gizmo-frame");
   });
 
-  it("draws a box for every selected layer when all are selected (synchronized)", () => {
+  it("the gizmo wraps the union of all selected layers", () => {
     const a = layer({ id: "a", center: { x: -50, y: 0 } });
     const b = layer({ id: "b", center: { x: 50, y: 0 } });
     const html = renderToString(<Host layers={[a, b]} selected={new Set(["a", "b"])} />);
-    expect(html).toContain('data-sel-for="a"');
-    expect(html).toContain('data-sel-for="b"');
-    // one combined handle at the centroid (x = 0)
-    expect((html.match(/center-handle/g) ?? []).length).toBe(1);
-    expect(html).toContain("translate(0,0)");
+    // union center is at x=0; a single gizmo wraps both layers.
+    expect((html.match(/class="gizmo"/g) ?? []).length).toBe(1);
   });
 });
