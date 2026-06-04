@@ -3,9 +3,9 @@
 // import, never during drag.
 import type { Box, Motif } from "../types";
 import { sanitizeSvg } from "./sanitize";
+import { defsFromSvg, partsFromSvg, serializeMotif } from "./parts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const PAINTABLE = "path,rect,circle,ellipse,line,polyline,polygon";
 
 function parseViewBox(svgEl: SVGSVGElement): Box | null {
   const vb = svgEl.getAttribute("viewBox");
@@ -49,16 +49,22 @@ export function importSvgFromText(raw: string): Motif {
     throw new Error("Could not parse this file as SVG.");
   }
 
-  const innerHtml = svgEl.innerHTML;
+  // Flatten into addressable parts; `innerHtml` is derived from them (defs
+  // preamble + parts) so it renders identically but each piece is editable.
+  const parts = partsFromSvg(svgEl as SVGSVGElement);
+  const defs = defsFromSvg(svgEl as SVGSVGElement);
+  const innerHtml = parts.length > 0 ? serializeMotif({ innerHtml: "", parts, defs } as Motif) : svgEl.innerHTML;
   const box =
     parseViewBox(svgEl as SVGSVGElement) ??
     parseWidthHeight(svgEl as SVGSVGElement) ??
-    bboxFromContent(innerHtml);
+    bboxFromContent(svgEl.innerHTML);
 
-  const weight = svgEl.querySelectorAll(PAINTABLE).length;
+  const weight = parts.length;
 
   return {
     innerHtml,
+    parts: parts.length > 0 ? parts : undefined,
+    defs: defs || undefined,
     anchorX: box.x + box.width / 2,
     anchorY: box.y + box.height / 2,
     box,

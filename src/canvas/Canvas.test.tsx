@@ -13,6 +13,7 @@ const params: RepeatParams = {
   angleOffset: 0,
   radiusOffset: 120,
   sourceRotation: 0,
+  sourceScale: 1,
   orientationMode: "rotateWithCircle",
   mirrorAlternates: false,
   scaleStep: 0,
@@ -38,20 +39,32 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       layers={layers}
       selectedIds={selected}
       gizmo={gizmo}
+      componentEdit={null}
+      onComponentSelect={() => {}}
+      onComponentExit={() => {}}
+      onCommitComponent={() => {}}
+      partEdit={null}
+      onEnterPartMode={() => {}}
+      onSelectPart={() => {}}
+      onCommitPartTransform={() => {}}
+      onExitPart={() => {}}
       motionCss=""
       motionPath={null}
       drawingMotionPath={false}
       animationsMoving={false}
       tool="select"
-      pencil={{ size: 18, smoothing: 55, fillColor: "#7c93ff" }}
+      pencil={{ size: 18, smoothing: 55 }}
+      fillColor="#7c93ff"
       onDrawCommit={() => {}}
       viewport={{ tx: 0, ty: 0, s: 1 }}
       dragging={false}
+      setDragging={() => {}}
       scene={scene}
       onLayerPointerDown={() => {}}
       onMarqueeSelect={() => {}}
       onMotionPathCommit={() => {}}
       onResizePointerDown={() => {}}
+      onRotatePointerDown={() => {}}
       onDuplicateSelected={() => {}}
       onGroupSelection={() => {}}
       onUngroupSelection={() => {}}
@@ -77,6 +90,7 @@ describe("Canvas layer stack + selection gizmo", () => {
     const html = renderToString(<Host layers={[a]} selected={new Set(["a"])} />);
     expect(html).toContain("gizmo-frame");
     expect((html.match(/gizmo-handle/g) ?? []).length).toBe(4);
+    expect(html).toContain("gizmo-rotate-knob");
     expect(html).toContain("gizmo-action-menu");
   });
 

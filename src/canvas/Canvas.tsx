@@ -5,13 +5,15 @@
 // selection gizmo: a frame around the union of the selected layers, with corner
 // resize handles and a compact selection-action menu.
 import { useEffect, useRef, useState } from "react";
-import { GIZMO_DUP_GAP, GIZMO_HANDLE, isHeavy } from "../config";
+import { GIZMO_DUP_GAP, GIZMO_HANDLE, ROTATE_GAP, isHeavy } from "../config";
 import { LayerArt } from "./LayerArt";
 import { pencilPreviewPath, type PencilSettings } from "../motif/drawnPath";
+import { PartEditLayer } from "./PartEditLayer";
+import { ComponentEditLayer } from "./ComponentEditLayer";
 import type { Scene } from "./useScene";
 import type { GBounds } from "./selectionBounds";
 import type { WorldRect } from "../App";
-import type { Center, Layer, Viewport } from "../types";
+import type { Center, Layer, PartTransform, RepeatParams, Viewport } from "../types";
 
 const CORNERS = ["tl", "tr", "bl", "br"] as const;
 const CORNER_CURSOR: Record<string, string> = {
@@ -26,6 +28,17 @@ interface CanvasProps {
   selectedIds: Set<string>;
   /** Selection gizmo bounds (union of selected, editable layers), or null. */
   gizmo: GBounds | null;
+  /** Which layer+copy is in single-component edit mode, or null. */
+  componentEdit: { layerId: string; index: number } | null;
+  onComponentSelect: (layerId: string, index: number) => void;
+  onComponentExit: () => void;
+  onCommitComponent: (partial: Partial<RepeatParams>) => void;
+  /** Sub-part editing: which layer is in part-edit mode + the selected part. */
+  partEdit: { layerId: string; partId: string | null; index: number } | null;
+  onEnterPartMode: (layerId: string, index: number) => void;
+  onSelectPart: (layerId: string, partId: string) => void;
+  onCommitPartTransform: (layerId: string, partId: string, t: PartTransform) => void;
+  onExitPart: () => void;
   motionCss: string;
   motionPath: { start: Center; end: Center; closed: boolean } | null;
   drawingMotionPath: boolean;
@@ -33,16 +46,19 @@ interface CanvasProps {
   /** Active tool. "pencil" replaces select/marquee on the canvas with drawing. */
   tool: "select" | "pencil";
   pencil: PencilSettings;
+  fillColor: string;
   /** Finalize a pencil stroke (raw world points) into a drawn layer. */
   onDrawCommit: (points: Center[]) => void;
   viewport: Viewport;
   dragging: boolean;
+  setDragging: (d: boolean) => void;
   scene: Scene;
   /** Grab a layer's artwork: select-if-needed and begin a move. */
   onLayerPointerDown: (e: React.PointerEvent, id: string, additive: boolean) => void;
   onMarqueeSelect: (rect: WorldRect, additive: boolean) => void;
   onMotionPathCommit: (handle: "start" | "end", point: Center) => void;
   onResizePointerDown: (e: React.PointerEvent) => void;
+  onRotatePointerDown: (e: React.PointerEvent) => void;
   onDuplicateSelected: () => void;
   onGroupSelection: () => void;
   onUngroupSelection: () => void;
@@ -57,20 +73,32 @@ export function Canvas({
   layers,
   selectedIds,
   gizmo,
+  componentEdit,
+  onComponentSelect,
+  onComponentExit,
+  onCommitComponent,
+  partEdit,
+  onEnterPartMode,
+  onSelectPart,
+  onCommitPartTransform,
+  onExitPart,
   motionCss,
   motionPath,
   drawingMotionPath,
   animationsMoving,
   tool,
   pencil,
+  fillColor,
   onDrawCommit,
   viewport,
   dragging,
+  setDragging,
   scene,
   onLayerPointerDown,
   onMarqueeSelect,
   onMotionPathCommit,
   onResizePointerDown,
+  onRotatePointerDown,
   onDuplicateSelected,
   onGroupSelection,
   onUngroupSelection,
@@ -84,6 +112,9 @@ export function Canvas({
 
   const spaceHeld = useRef(false);
   const panState = useRef({ active: false, lastX: 0, lastY: 0 });
+  // Manual double-tap detection (native dblclick is unreliable under the
+  // pointer-capture used by the move gesture).
+  const lastTap = useRef<{ id: string; t: number; x: number; y: number } | null>(null);
   const motionLineRef = useRef<SVGLineElement>(null);
   const motionStartRef = useRef<SVGCircleElement>(null);
   const motionEndRef = useRef<SVGCircleElement>(null);
@@ -239,8 +270,8 @@ export function Canvas({
     drawPts.current = [start];
     const el = pencilPreviewRef.current;
     if (el) {
-      el.setAttribute("fill", pencil.fillColor);
-      el.setAttribute("stroke", pencil.fillColor);
+      el.setAttribute("fill", fillColor);
+      el.setAttribute("stroke", fillColor);
       el.setAttribute("stroke-width", String(pencil.size * inv));
       el.setAttribute("d", "");
     }
@@ -257,9 +288,15 @@ export function Canvas({
       return;
     }
     if (e.button !== 0) return;
-    // The gizmo (resize handles + selection menu) owns its own pointerdowns.
-    if ((e.target as Element).closest?.(".gizmo, .motion-path-ui")) return;
+    // The gizmo (resize handles + selection menu), component overlay and part
+    // overlay own their own pointerdowns.
+    if ((e.target as Element).closest?.(".gizmo, .motion-path-ui, .component-ui, .part-edit-overlay")) return;
     setActionMenuOpen(false);
+
+    // A click anywhere outside the component/part overlays exits those edit
+    // modes (then falls through to normal select/marquee behavior).
+    if (componentEdit) onComponentExit();
+    if (partEdit) onExitPart();
 
     // Pencil tool: draw instead of select/marquee. PRD §8.
     if (tool === "pencil") {
@@ -273,12 +310,28 @@ export function Canvas({
     }
 
     // Grab on a layer's artwork: select-if-needed and begin a move (locked
-    // artwork is inert).
+    // artwork is inert). A double-tap on the artwork drills into the copy under
+    // the cursor (component edit) — detected manually, because pointer-capture
+    // during a move suppresses the browser's native dblclick.
     const el = (e.target as Element).closest?.(".layer[data-layer-id]");
     const id = el?.getAttribute("data-layer-id");
     if (id) {
       const layer = layers.find((l) => l.id === id);
-      if (layer && !layer.locked) onLayerPointerDown(e, id, e.shiftKey);
+      if (layer && !layer.locked) {
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        const last = lastTap.current;
+        const isDouble =
+          !!last && last.id === id && now - last.t < 350 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 6;
+        lastTap.current = isDouble ? null : { id, t: now, x: e.clientX, y: e.clientY };
+        if (isDouble && tool === "select") {
+          e.preventDefault();
+          const iEl = (e.target as Element).closest?.("[data-i]");
+          const i = iEl?.getAttribute("data-i");
+          onComponentSelect(id, i != null ? parseInt(i, 10) : 0);
+          return;
+        }
+        onLayerPointerDown(e, id, e.shiftKey);
+      }
       return;
     }
 
@@ -330,6 +383,13 @@ export function Canvas({
     if (mode.current !== "motion-path") mode.current = null;
     panState.current.active = false;
   };
+  // Drill from the component gizmo into the motif's sub-parts (if it has any).
+  const drillToParts = () => {
+    if (!componentEdit) return;
+    const cl = layers.find((l) => l.id === componentEdit.layerId);
+    if (cl && (cl.motif.parts?.length ?? 0) >= 2) onEnterPartMode(componentEdit.layerId, componentEdit.index);
+  };
+
   const endPan = () => {
     if (mode.current === "marquee") setMarquee(null);
     if (mode.current === "draw") {
@@ -372,8 +432,8 @@ export function Canvas({
             <path
               ref={pencilPreviewRef}
               className="pencil-preview"
-              fill={pencil.fillColor}
-              stroke={pencil.fillColor}
+              fill={fillColor}
+              stroke={fillColor}
               strokeLinejoin="round"
               strokeLinecap="round"
               style={{ pointerEvents: "none" }}
@@ -433,6 +493,12 @@ export function Canvas({
                 height={2 * gizmo.hh}
                 fill="none"
               />
+              {/* Rotate knob above the top edge: rotates the whole composite
+                  (angle offset). */}
+              <g className="gizmo-rotate" transform={`translate(0,${-gizmo.hh})`} onPointerDown={onRotatePointerDown}>
+                <line className="gizmo-rotate-line" x1={0} y1={0} x2={0} y2={-ROTATE_GAP * inv} />
+                <circle className="gizmo-rotate-knob" cx={0} cy={-ROTATE_GAP * inv} r={6 * inv} />
+              </g>
               {CORNERS.map((c) => {
                 const sx = c.includes("r") ? 1 : -1;
                 const sy = c.includes("b") ? 1 : -1;
@@ -504,6 +570,39 @@ export function Canvas({
               </g>
             </g>
           )}
+          {/* Individual-component gizmo: a frame that hugs the edited copy, with
+              corner handles to resize (sourceScale) and a knob to rotate
+              (sourceRotation); dragging the frame moves it (symmetric). */}
+          {componentEdit && (() => {
+            const cl = layers.find((l) => l.id === componentEdit.layerId);
+            return cl ? (
+              <ComponentEditLayer
+                layer={cl}
+                index={componentEdit.index}
+                scene={scene}
+                inv={inv}
+                onCommit={onCommitComponent}
+                onDrill={drillToParts}
+                setDragging={setDragging}
+              />
+            ) : null;
+          })()}
+          {/* Sub-part edit overlay: per-part hit-rects on the representative copy. */}
+          {partEdit && (() => {
+            const pl = layers.find((l) => l.id === partEdit.layerId);
+            return pl ? (
+              <PartEditLayer
+                layer={pl}
+                selectedPartId={partEdit.partId}
+                index={partEdit.index}
+                scene={scene}
+                inv={inv}
+                onSelectPart={(partId) => onSelectPart(pl.id, partId)}
+                onCommitTransform={(partId, t) => onCommitPartTransform(pl.id, partId, t)}
+                setDragging={setDragging}
+              />
+            ) : null;
+          })()}
         </g>
       </g>
     </svg>

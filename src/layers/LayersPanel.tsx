@@ -4,7 +4,8 @@
 import { useRef, useState } from "react";
 import { Icon } from "../ui/icons";
 import { boundsReach, instanceOpacity, instanceTransform, paintOrder } from "../canvas/repeatMath";
-import type { Layer, LayerGroup } from "../types";
+import { renderPart } from "../motif/parts";
+import type { Layer, LayerGroup, Motif, MotifPart } from "../types";
 
 export type MoveDir = "front" | "forward" | "backward" | "back";
 
@@ -22,6 +23,10 @@ interface LayersPanelProps {
   onRename: (id: string, name: string) => void;
   onToggleVisible: (id: string) => void;
   onToggleLocked: (id: string) => void;
+  onTogglePart: (layerId: string, partId: string) => void;
+  onSelectPart: (layerId: string, partId: string) => void;
+  onReorderPart: (layerId: string, draggedId: string, targetId: string) => void;
+  selectedPart: { layerId: string; partId: string | null } | null;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onMove: (id: string, dir: MoveDir) => void;
@@ -55,6 +60,21 @@ function LayerThumb({ layer }: { layer: Layer }) {
   );
 }
 
+/** Preview a single motif sub-part within the motif's bounding frame. */
+function PartThumb({ motif, part }: { motif: Motif; part: MotifPart }) {
+  const b = motif.box;
+  const r = 0.5 * Math.hypot(b.width, b.height) + 4;
+  const cx = b.x + b.width / 2;
+  const cy = b.y + b.height / 2;
+  return (
+    <div className={`lr-thumb part${part.visible ? "" : " is-hidden"}`}>
+      <svg viewBox={`${cx - r} ${cy - r} ${2 * r} ${2 * r}`}>
+        <g dangerouslySetInnerHTML={{ __html: renderPart(part) }} />
+      </svg>
+    </div>
+  );
+}
+
 export function LayersPanel({
   layers,
   groups,
@@ -69,6 +89,10 @@ export function LayersPanel({
   onRename,
   onToggleVisible,
   onToggleLocked,
+  onTogglePart,
+  onSelectPart,
+  onReorderPart,
+  selectedPart,
   onDuplicate,
   onDelete,
   onMove,
@@ -77,9 +101,18 @@ export function LayersPanel({
 }: LayersPanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [expandedParts, setExpandedParts] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string) =>
+    setExpandedParts((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   const [query, setQuery] = useState("");
   const draggedId = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
+  const draggedPart = useRef<{ layerId: string; partId: string } | null>(null);
+  const [overPartId, setOverPartId] = useState<string | null>(null);
 
   const q = query.trim().toLowerCase();
   const display = layers.slice().reverse();
@@ -156,6 +189,9 @@ export function LayersPanel({
           const l = entry.layer;
           const selected = selectedIds.has(l.id);
           const anim = l.animation?.enabled;
+          const parts = l.motif.parts ?? [];
+          const hasParts = parts.length > 1;
+          const expanded = expandedParts.has(l.id);
           return (
             <div key={l.id} style={{ position: "relative" }}>
               <div
@@ -180,7 +216,12 @@ export function LayersPanel({
                 onDragEnd={() => { draggedId.current = null; setOverId(null); }}
               >
                 <span className="lr-grip">{Icon.grip()}</span>
-                <span className="lr-disclosure" />
+                <span
+                  className={`lr-disclosure${hasParts ? " clickable" : ""}${expanded ? " open" : ""}`}
+                  onPointerDown={hasParts ? (e) => { e.stopPropagation(); toggleExpanded(l.id); } : undefined}
+                >
+                  {hasParts ? Icon.chevron() : null}
+                </span>
                 <LayerThumb layer={l} />
                 <div className="lr-body">
                   {editingId === l.id ? (
@@ -225,6 +266,48 @@ export function LayersPanel({
                   </button>
                 </div>
               </div>
+              {hasParts && expanded && parts.map((part) => {
+                const partSelected = selectedPart?.layerId === l.id && selectedPart.partId === part.id;
+                return (
+                  <div
+                    key={part.id}
+                    className={`layer-row part-row${part.visible ? "" : " part-hidden"}${partSelected ? " is-selected" : ""}${overPartId === part.id ? " is-drop-target" : ""}`}
+                    style={{ paddingLeft: 4 + (entry.depth + 1) * 16 }}
+                    draggable
+                    onPointerDown={(e) => { e.stopPropagation(); onSelectPart(l.id, part.id); }}
+                    onDragStart={(e) => { draggedPart.current = { layerId: l.id, partId: part.id }; e.dataTransfer.effectAllowed = "move"; }}
+                    onDragOver={(e) => {
+                      const d = draggedPart.current;
+                      if (d && d.layerId === l.id && d.partId !== part.id) { e.preventDefault(); setOverPartId(part.id); }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const d = draggedPart.current;
+                      if (d && d.layerId === l.id && d.partId !== part.id) onReorderPart(l.id, d.partId, part.id);
+                      draggedPart.current = null;
+                      setOverPartId(null);
+                    }}
+                    onDragEnd={() => { draggedPart.current = null; setOverPartId(null); }}
+                  >
+                    <span className="lr-grip">{Icon.grip()}</span>
+                    <span className="lr-disclosure" />
+                    <PartThumb motif={l.motif} part={part} />
+                    <div className="lr-body">
+                      <span className="lr-name">{part.name}</span>
+                    </div>
+                    <div className="lr-actions">
+                      <button
+                        className={`lr-ico${part.visible ? " on" : " is-quiet"}`}
+                        disabled={dragging}
+                        onPointerDown={(e) => { e.stopPropagation(); onTogglePart(l.id, part.id); }}
+                        title={part.visible ? "Hide part" : "Show part"}
+                      >
+                        {part.visible ? Icon.eye() : Icon.eyeOff()}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
               {menuId === l.id && (
                 <div style={{ position: "absolute", right: 8, top: 36, zIndex: 50 }}>
                   <div className="menu right" onClick={(e) => e.stopPropagation()}>

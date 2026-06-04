@@ -18,6 +18,7 @@ import {
   motionClassName,
   referenceInstancePoint,
 } from "../motion/centerPath";
+import { recolorMarkup } from "./recolor";
 import type { Layer } from "../types";
 
 const EXPORT_MARGIN = 8;
@@ -59,13 +60,24 @@ function layerMarkup(layer: Layer, animated: boolean): string {
   const motifId = `motif-${id}`;
   const useTuck = params.tuck;
 
+  // Per-component fill: one recolored def per distinct override color, each
+  // overriding <use> pointed at its colored source. Mirrors LayerArt.
+  const overrideColors = Array.from(
+    new Set(Object.values(layer.components).map((c) => c.fill).filter((f): f is string => !!f))
+  );
+  const colorDefId = new Map(overrideColors.map((c, n) => [c, `${motifId}-c${n}`]));
+  const hrefForIndex = (i: number) => {
+    const f = layer.components[i]?.fill;
+    return f ? `#${colorDefId.get(f)}` : `#${motifId}`;
+  };
+
   const useEl = (i: number, alt = false) =>
     `          <g>
             <g class="instance-placement" transform="${animated && layer.animation?.enabled ? instanceSpokeTransform(params, i) : instanceTransform(params, i)}" opacity="${instanceOpacity(params, i)}">
               <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}"${animated ? instanceMotionStyleText(layer, i) : ""}>
                 <g class="instance-local-transform"${animated && layer.animation?.enabled ? ` transform="${instanceLocalTransform(params, i)}"` : ""}>
                   <g class="instance-follow-wrapper">
-                    <use${alt ? ' class="alt"' : ""} href="#${motifId}"/>
+                    <use${alt ? ' class="alt"' : ""} href="${hrefForIndex(i)}"/>
                   </g>
                 </g>
               </g>
@@ -89,8 +101,15 @@ function layerMarkup(layer: Layer, animated: boolean): string {
     body = paintOrder(params.count, params.paintOffset).map((i) => useEl(i)).join("\n");
   }
 
+  const colorDefs = overrideColors
+    .map(
+      (c) =>
+        `\n    <g id="${colorDefId.get(c)}" transform="translate(${-motif.anchorX},${-motif.anchorY})">${recolorMarkup(motif.innerHtml, c)}</g>`
+    )
+    .join("");
+
   return `  <defs>
-    <g id="${motifId}" transform="translate(${-motif.anchorX},${-motif.anchorY})">${motif.innerHtml}</g>${defs}
+    <g id="${motifId}" transform="translate(${-motif.anchorX},${-motif.anchorY})">${motif.innerHtml}</g>${colorDefs}${defs}
   </defs>
   <g class="layer" data-layer-id="${id}">
     <g class="layer-center-root" transform="translate(${center.x},${center.y})">

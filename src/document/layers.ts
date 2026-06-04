@@ -36,6 +36,7 @@ export function createLayer(opts: {
     params: { ...opts.params },
     center: { ...opts.center },
     scale: opts.scale ?? 1,
+    components: {},
     createdAt: now,
     updatedAt: now,
   };
@@ -65,6 +66,7 @@ export function duplicateLayer(layer: Layer): Layer {
     name: `${layer.name} copy`,
     params: { ...layer.params },
     center: { ...layer.center },
+    components: Object.fromEntries(Object.entries(layer.components).map(([k, v]) => [k, { ...v }])),
     animation: cloneAnimation(layer.animation),
     createdAt: now,
     updatedAt: now,

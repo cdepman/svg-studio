@@ -16,6 +16,8 @@ export const HANDLE_HIT_R = 16;
 export const GIZMO_HANDLE = 11;
 /** Gap from the gizmo's top-right corner to the duplicate button, screen px. */
 export const GIZMO_DUP_GAP = 16;
+/** Length of the rotate-knob stem above the gizmo / component box, screen px. */
+export const ROTATE_GAP = 26;
 
 export function isHeavy(count: number, motifWeight: number): boolean {
   return count * motifWeight > HEAVY_THRESHOLD;

@@ -15,7 +15,19 @@ import { Icon } from "./ui/icons";
 import { Timeline } from "./ui/Timeline";
 import { DEFAULT_MOTIF_SVG } from "./defaultMotif";
 import { importSvgFromFile, importSvgFromText } from "./motif/importSvg";
-import { boxCenter, DEFAULT_PENCIL, strokeToFilledPath, unionBox, type PencilSettings } from "./motif/drawnPath";
+import { boxCenter, DEFAULT_FILL, DEFAULT_PENCIL, strokeToFilledPath, unionBox, type PencilSettings } from "./motif/drawnPath";
+import { motifFillColor } from "./motif/recolor";
+import {
+  appendPart,
+  partColor,
+  recolorMotif,
+  reorderParts,
+  setPartFill,
+  setPartTransform,
+  setPartVisible,
+  singlePart,
+} from "./motif/parts";
+import { useRotateDrag } from "./canvas/useRotateDrag";
 import {
   buildAnimatedExportSvg,
   buildExportSvg,
@@ -47,7 +59,7 @@ import {
   reorderByDisplay,
   updateLayer,
 } from "./document/layers";
-import type { Center, Layer, LayerGroup, Motif, RepeatParams } from "./types";
+import type { Center, Layer, LayerGroup, Motif, PartTransform, RepeatParams } from "./types";
 import type { CenterPathAnimation } from "./types";
 
 type StateAction<T> = T | ((prev: T) => T);
@@ -86,6 +98,7 @@ const DEFAULT_PARAMS: RepeatParams = {
   angleOffset: 0,
   radiusOffset: 140,
   sourceRotation: 0,
+  sourceScale: 1,
   orientationMode: "rotateWithCircle",
   mirrorAlternates: false,
   scaleStep: 0,
@@ -137,6 +150,18 @@ export default function App() {
   const [animationPlaying, setAnimationPlaying] = useState(false);
   const [tool, setTool] = useState<"select" | "pencil">("select");
   const [pencil, setPencil] = useState<PencilSettings>(DEFAULT_PENCIL);
+  // Current fill: the default for new shapes (no selection), or the selected
+  // layer's color when one is selected. Always available via the swatch.
+  const [fillColor, setFillColor] = useState(DEFAULT_FILL);
+  // The individual component being edited (double-click a copy). Its layer is
+  // the sole selection while editing.
+  const [componentEdit, setComponentEdit] = useState<{ layerId: string; index: number } | null>(null);
+  // The motif sub-part being edited (select a row in the layer tree). Edits the
+  // shared motif, so it changes that piece across every copy in the ring.
+  // partId null = the layer is in part-edit mode (parts are clickable) but none
+  // is selected yet; set = that specific sub-part is selected for move/rotate.
+  // index = which copy the overlay is shown on (edits sync to all copies).
+  const [partEdit, setPartEdit] = useState<{ layerId: string; partId: string | null; index: number } | null>(null);
   const [mode, setMode] = useState<"design" | "animate">("design");
   const [openMenu, setOpenMenu] = useState<"file" | "export" | null>(null);
   const [loop, setLoop] = useState(true);
@@ -229,8 +254,8 @@ export default function App() {
   const editableIdsRef = useRef<Set<string>>(new Set());
   editableIdsRef.current = new Set(editableSelected.map((l) => l.id));
 
-  const docRef = useRef({ layers, groups, selectedIds, primaryId, dragging, tool });
-  docRef.current = { layers, groups, selectedIds, primaryId, dragging, tool };
+  const docRef = useRef({ layers, groups, selectedIds, primaryId, dragging, tool, componentEdit, partEdit });
+  docRef.current = { layers, groups, selectedIds, primaryId, dragging, tool, componentEdit, partEdit };
 
   const commitDocument = (update: (doc: DocumentState) => DocumentState) => {
     setHistory((h) => {
@@ -425,8 +450,93 @@ export default function App() {
     },
   });
 
+  // Composite rotation: the gizmo's rotate knob spins the whole selection around
+  // its union center by changing each layer's angle offset.
+  const gizmoCenterRef = useRef<Center>({ x: 0, y: 0 });
+  gizmoCenterRef.current = gizmo ? { x: gizmo.cx, y: gizmo.cy } : { x: 0, y: 0 };
+  const onRotatePointerDown = useRotateDrag(scene, {
+    getPivot: () => gizmoCenterRef.current,
+    key: "angleOffset",
+    onStart: () => setDragging(true),
+    onCommit: (key, delta) => {
+      onCommitDelta(key, delta);
+      setDragging(false);
+    },
+  });
+
+  // --- Individual component edit (move/resize/rotate/color one copy) ---
+  // The on-canvas gizmo (ComponentEditLayer) owns all three gestures; here we
+  // just track which copy is being edited and commit symmetric param changes.
+  const componentLayer = componentEdit ? layers.find((l) => l.id === componentEdit.layerId) ?? null : null;
+  function enterComponentEdit(layerId: string, index: number) {
+    const l = docRef.current.layers.find((x) => x.id === layerId);
+    if (!l || l.locked || !l.visible) return;
+    updateSelection([layerId]);
+    setComponentEdit({ layerId, index });
+  }
+  const exitComponentEdit = () => setComponentEdit(null);
+
+  // --- Motif sub-part edit ---
+  const partLayer = partEdit ? layers.find((l) => l.id === partEdit.layerId) ?? null : null;
+  const editedPart = partLayer && partEdit?.partId ? partLayer.motif.parts?.find((p) => p.id === partEdit.partId) ?? null : null;
+
+  // --- Color ---
+  // The swatch reflects the edited part, else the edited component, else the
+  // selected layer, else the default. Changing it sets the matching override.
+  const swatchColor = editedPart
+    ? partColor(editedPart) ?? fillColor
+    : componentEdit && componentLayer
+    ? componentLayer.components[componentEdit.index]?.fill ?? motifFillColor(componentLayer.motif) ?? fillColor
+    : primary && primary.visible && !primary.locked
+    ? motifFillColor(primary.motif) ?? fillColor
+    : fillColor;
+  function applyColor(color: string) {
+    // Whatever color you pick also becomes the working default that new pencil
+    // shapes inherit — so it carries forward even when it was applied to an
+    // existing part, component or layer.
+    setFillColor(color);
+    if (partEdit?.partId) {
+      const pid = partEdit.partId;
+      updateLayers((ls) =>
+        ls.map((l) => (l.id === partEdit.layerId ? { ...l, motif: setPartFill(l.motif, pid, color), updatedAt: Date.now() } : l))
+      );
+      return;
+    }
+    if (componentEdit) {
+      updateLayers((ls) =>
+        ls.map((l) =>
+          l.id === componentEdit.layerId
+            ? { ...l, components: { ...l.components, [componentEdit.index]: { ...l.components[componentEdit.index], fill: color } }, updatedAt: Date.now() }
+            : l
+        )
+      );
+      return;
+    }
+    const ids = editableIdsRef.current;
+    if (ids.size > 0) {
+      updateLayers((ls) =>
+        ls.map((l) => (ids.has(l.id) ? { ...l, motif: recolorMotif(l.motif, color), updatedAt: Date.now() } : l))
+      );
+    }
+  }
+  async function pickColor() {
+    const ED = (window as unknown as { EyeDropper?: new () => { open: () => Promise<{ sRGBHex: string }> } }).EyeDropper;
+    if (!ED) {
+      setNotice("Eyedropper isn’t supported in this browser.");
+      return;
+    }
+    try {
+      const res = await new ED().open();
+      applyColor(res.sRGBHex);
+    } catch {
+      /* user cancelled */
+    }
+  }
+
   // --- Selection actions ---
   const selectSingle = (id: string, additive = false) => {
+    // Selecting a layer (panel row or canvas grab) ends any sub-part edit.
+    if (docRef.current.partEdit) setPartEdit(null);
     const group = groupForLayer(docRef.current.groups, id);
     const ids = group?.layerIds ?? [id];
     updateSelection((prev) => {
@@ -587,7 +697,7 @@ export default function App() {
   // creates a plain single-instance drawn layer (no repeat yet); subsequent
   // strokes APPEND to it so you can compose a shape from several lines. PRD §8,§15A.
   function onDrawCommit(points: Center[]) {
-    const sp = strokeToFilledPath(points, pencil.size / viewport.s, pencil.smoothing, pencil.fillColor);
+    const sp = strokeToFilledPath(points, pencil.size / viewport.s, pencil.smoothing, fillColor);
     if (!sp) return; // tiny stroke / stray click — silently ignored. PRD §18.
 
     const curId = currentDrawingRef.current;
@@ -603,8 +713,7 @@ export default function App() {
                 // append the new path; re-anchor + re-center on the union bbox so
                 // every stroke stays where it was drawn. PRD §13.
                 motif: {
-                  ...l.motif,
-                  innerHtml: l.motif.innerHtml + sp.pathHtml,
+                  ...appendPart(l.motif, singlePart(sp.pathHtml, `Shape ${l.motif.weight + 1}`, sp.box)),
                   box,
                   anchorX: c.x,
                   anchorY: c.y,
@@ -623,7 +732,15 @@ export default function App() {
     const c = boxCenter(sp.box);
     const layer = createLayer({
       name: `Drawn Shape ${drawnCount.current}`,
-      motif: { innerHtml: sp.pathHtml, anchorX: c.x, anchorY: c.y, box: sp.box, weight: 1, simplified: false },
+      motif: {
+        innerHtml: sp.pathHtml,
+        parts: [singlePart(sp.pathHtml, "Shape 1", sp.box)],
+        anchorX: c.x,
+        anchorY: c.y,
+        box: sp.box,
+        weight: 1,
+        simplified: false,
+      },
       params: DRAWN_PARAMS,
       center: c,
     });
@@ -724,6 +841,44 @@ export default function App() {
     if (docRef.current.dragging) return;
     updateLayers((ls) => updateLayer(ls, id, (l) => ({ ...l, locked: !l.locked, updatedAt: Date.now() })));
   };
+  // Toggle one motif sub-part's visibility (affects every copy in the ring).
+  const onTogglePart = (layerId: string, partId: string) => {
+    if (docRef.current.dragging) return;
+    updateLayers((ls) =>
+      updateLayer(ls, layerId, (l) => {
+        const part = l.motif.parts?.find((p) => p.id === partId);
+        return part ? { ...l, motif: setPartVisible(l.motif, partId, !part.visible), updatedAt: Date.now() } : l;
+      })
+    );
+  };
+  // Double-click a layer's artwork to drill into its parts: they become clickable
+  // on the canvas. Only worth it for multi-part motifs.
+  const enterPartMode = (layerId: string, index = 0) => {
+    const l = docRef.current.layers.find((x) => x.id === layerId);
+    if (!l || l.locked || (l.motif.parts?.length ?? 0) < 2) return;
+    setComponentEdit(null);
+    updateSelection([layerId]);
+    setPartEdit({ layerId, partId: null, index });
+  };
+  // Select a motif sub-part for editing (color/move/rotate). Selects its layer
+  // and clears any component edit so the two edit modes stay exclusive.
+  const onSelectPart = (layerId: string, partId: string) => {
+    const l = docRef.current.layers.find((x) => x.id === layerId);
+    if (!l || l.locked) return;
+    setComponentEdit(null);
+    updateSelection([layerId]);
+    setPartEdit((prev) => ({ layerId, partId, index: prev && prev.layerId === layerId ? prev.index : 0 }));
+  };
+  const onReorderPart = (layerId: string, draggedId: string, targetId: string) => {
+    updateLayers((ls) =>
+      updateLayer(ls, layerId, (l) => ({ ...l, motif: reorderParts(l.motif, draggedId, targetId), updatedAt: Date.now() }))
+    );
+  };
+  const onSetPartTransform = (layerId: string, partId: string, transform: PartTransform) => {
+    updateLayers((ls) =>
+      updateLayer(ls, layerId, (l) => ({ ...l, motif: setPartTransform(l.motif, partId, transform), updatedAt: Date.now() }))
+    );
+  };
   const onMove = (id: string, dir: MoveDir) => {
     updateLayers((ls) => {
       switch (dir) {
@@ -776,6 +931,14 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
 
       if (typing) return;
+      if (e.key === "Escape" && docRef.current.partEdit) {
+        setPartEdit(null);
+        return;
+      }
+      if (e.key === "Escape" && docRef.current.componentEdit) {
+        setComponentEdit(null);
+        return;
+      }
       if (e.key === "Escape" && docRef.current.tool === "pencil") {
         currentDrawingRef.current = null;
         setTool("select");
@@ -971,6 +1134,10 @@ export default function App() {
           onRename={onRename}
           onToggleVisible={onToggleVisible}
           onToggleLocked={onToggleLocked}
+          onTogglePart={onTogglePart}
+          onSelectPart={onSelectPart}
+          onReorderPart={onReorderPart}
+          selectedPart={partEdit}
           onDuplicate={onDuplicate}
           onDelete={onDelete}
           onMove={onMove}
@@ -983,10 +1150,16 @@ export default function App() {
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}
         >
-          {/* tool rail */}
+          {/* tool rail (select / pencil / eyedropper + always-on color swatch) */}
           <div className="tool-rail">
             <button className={`tool-btn${tool === "select" ? " is-active" : ""}`} onClick={() => switchTool("select")} title="Select / move (V)">{Icon.cursor()}</button>
             <button className={`tool-btn${tool === "pencil" ? " is-active" : ""}`} onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")} title="Pencil — draw a shape (P)">{Icon.pen()}</button>
+            <button className="tool-btn" onClick={pickColor} title="Eyedropper — pick a color from screen">{Icon.eyedropper({ size: 18 })}</button>
+            <div className="tool-rail-sep" />
+            <label className="tool-swatch" title={primary && tool === "select" ? "Layer fill" : "Default fill for new shapes"} style={{ background: swatchColor }}>
+              <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(swatchColor) ? swatchColor : "#000000"}
+                onChange={(e) => applyColor(e.target.value)} />
+            </label>
           </div>
 
           {tool === "pencil" && (
@@ -1000,10 +1173,6 @@ export default function App() {
                 <input type="range" min={0} max={100} step={1} value={pencil.smoothing}
                   onChange={(e) => setPencil((p) => ({ ...p, smoothing: parseInt(e.target.value, 10) }))} />
               </label>
-              <label className="pencil-fill">Fill
-                <input type="color" value={pencil.fillColor}
-                  onChange={(e) => setPencil((p) => ({ ...p, fillColor: e.target.value }))} />
-              </label>
               <div className="pp-actions">
                 <button className="btn" onClick={finishDrawing} title="Start a separate shape">New Shape</button>
                 <button className="btn btn-accent" onClick={() => switchTool("select")}>Done</button>
@@ -1012,7 +1181,7 @@ export default function App() {
           )}
 
           {/* floating contextual toolbar */}
-          {primary && tool === "select" && (
+          {primary && tool === "select" && !componentEdit && !partEdit && (
             <div className="ctx-toolbar">
               <span className="ctx-label">
                 <span className="ctx-swatch" /> <b>{selectedIds.length > 1 ? `${selectedIds.length} layers` : primary.name}</b>
@@ -1028,21 +1197,33 @@ export default function App() {
           <Canvas
             layers={layers}
             selectedIds={selectedSet}
-            gizmo={gizmo}
+            gizmo={componentEdit || partEdit ? null : gizmo}
+            componentEdit={componentEdit}
+            onComponentSelect={enterComponentEdit}
+            onComponentExit={exitComponentEdit}
+            onCommitComponent={onCommitAbsolute}
+            partEdit={partEdit}
+            onEnterPartMode={enterPartMode}
+            onSelectPart={onSelectPart}
+            onCommitPartTransform={onSetPartTransform}
+            onExitPart={() => setPartEdit(null)}
             motionCss={motionCss}
             motionPath={mode === "animate" ? primaryMotionPath : null}
             drawingMotionPath={mode === "animate" && drawingMotionPath}
             animationsMoving={animationPlaying && mode === "animate" && !dragging && tool !== "pencil"}
             tool={tool}
             pencil={pencil}
+            fillColor={fillColor}
             onDrawCommit={onDrawCommit}
             viewport={viewport}
             dragging={dragging}
+            setDragging={setDragging}
             scene={scene}
             onLayerPointerDown={onLayerPointerDown}
             onMarqueeSelect={onMarqueeSelect}
             onMotionPathCommit={commitMotionPathPoint}
             onResizePointerDown={onResizePointerDown}
+            onRotatePointerDown={onRotatePointerDown}
             onDuplicateSelected={onDuplicateSelected}
             onGroupSelection={groupSelectedLayers}
             onUngroupSelection={ungroupSelectedLayers}
@@ -1065,7 +1246,11 @@ export default function App() {
               ? <>{Icon.pen({ size: 14 })} Drag the path handles to shape the motion</>
               : tool === "pencil"
               ? <>{Icon.pen({ size: 14 })} Draw a shape · multiple strokes compose one motif</>
-              : <>{Icon.cursor({ size: 14 })} Grab artwork to move · drag empty canvas to marquee-select</>}
+              : partEdit
+              ? <>{Icon.cursor({ size: 14 })} Editing parts · click a piece · drag to move · knob to rotate · Esc to back out</>
+              : componentEdit
+              ? <>{Icon.cursor({ size: 14 })} Editing one copy · drag to move · corners resize · knob rotates · double-click for its parts · Esc to exit</>
+              : <>{Icon.cursor({ size: 14 })} Grab artwork to move · double-click to edit a single copy · drag empty canvas to marquee</>}
           </div>
 
           {notice && <div className="toast toast-warn">{notice}</div>}

@@ -32,7 +32,7 @@ export function instanceSpokeTransform(p: RepeatParams, i: number): string {
 
 export function instanceLocalTransform(p: RepeatParams, i: number): string {
   const angle = p.angleOffset + i * angleStep(p.count);
-  const scale = 1 + i * p.scaleStep; // scaleStep can be negative
+  const scale = (1 + i * p.scaleStep) * p.sourceScale; // scaleStep can be negative
   const mirror = p.mirrorAlternates && i % 2 === 1 ? -1 : 1;
 
   const localOrientation =
@@ -97,7 +97,7 @@ export function paintOrder(count: number, paintOffset: number): number[] {
 export function maxAbsScale(p: RepeatParams): number {
   let m = 1;
   for (let i = 0; i < p.count; i++) m = Math.max(m, Math.abs(1 + i * p.scaleStep));
-  return m;
+  return m * Math.abs(p.sourceScale);
 }
 
 /** Half-extent of a layer's artwork from its center: the farthest a (possibly

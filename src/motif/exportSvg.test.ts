@@ -23,6 +23,7 @@ const params: RepeatParams = {
   angleOffset: 0,
   radiusOffset: 50,
   sourceRotation: 0,
+  sourceScale: 1,
   orientationMode: "rotateWithCircle",
   mirrorAlternates: false,
   scaleStep: 0,
@@ -62,6 +63,16 @@ describe("buildExportSvg (PRD §14)", () => {
     const svg = buildExportSvg([a]);
     expect(svg).toContain('id="motif-a"');
     expect((svg.match(/<use /g) ?? []).length).toBe(4); // count 4, no tuck
+  });
+
+  it("emits a colored def per component override and points that copy's use at it", () => {
+    const a = mk({ id: "a", components: { 0: { fill: "#ff0000" }, 2: { fill: "#ff0000" } } });
+    const svg = buildExportSvg([a]);
+    // One recolored def for the shared override color.
+    expect(svg).toContain('id="motif-a-c0"');
+    // The overridden copies point at the colored def; the rest at the base.
+    expect((svg.match(/href="#motif-a-c0"/g) ?? []).length).toBe(2);
+    expect((svg.match(/href="#motif-a"/g) ?? []).length).toBe(2);
   });
 
   it("normalizes the document canvas to a positive origin for thumbnail renderers", () => {

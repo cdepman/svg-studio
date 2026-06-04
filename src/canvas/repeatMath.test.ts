@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  instanceLocalTransform,
   instanceOpacity,
   instanceTransform,
   maxAbsScale,
@@ -14,6 +15,7 @@ const base: RepeatParams = {
   angleOffset: 0,
   radiusOffset: 100,
   sourceRotation: 0,
+  sourceScale: 1,
   orientationMode: "rotateWithCircle",
   mirrorAlternates: false,
   scaleStep: 0,
@@ -104,6 +106,16 @@ describe("maxAbsScale", () => {
   it("finds the largest magnitude across copies", () => {
     expect(maxAbsScale({ ...base, count: 4, scaleStep: 0.5 })).toBe(2.5); // 1+3*0.5
     expect(maxAbsScale({ ...base, count: 4, scaleStep: -1 })).toBe(2); // |1-3|
+  });
+  it("folds in the uniform sourceScale", () => {
+    expect(maxAbsScale({ ...base, sourceScale: 1.5 })).toBe(1.5);
+    expect(maxAbsScale({ ...base, count: 4, scaleStep: 0.5, sourceScale: 2 })).toBe(5); // 2.5*2
+  });
+});
+
+describe("sourceScale", () => {
+  it("scales every copy uniformly in its local transform", () => {
+    expect(instanceLocalTransform({ ...base, sourceScale: 2 }, 0)).toContain("scale(2,2)");
   });
 });
 

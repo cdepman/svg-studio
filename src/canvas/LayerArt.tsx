@@ -18,6 +18,8 @@ import {
 } from "./repeatMath";
 import { PROXY_CAP } from "../config";
 import { animationReachPadding, instanceMotionStyle, motionClassName } from "../motion/centerPath";
+import { recolorMarkup } from "../motif/recolor";
+import { partTransformAttr } from "../motif/parts";
 import type { Layer } from "../types";
 
 interface LayerArtProps {
@@ -36,6 +38,17 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
 
   const showTuck = p.tuck && !proxy;
   const halves = showTuck ? seamHalves(p, layer.motif.box, animationReachPadding(layer)) : null;
+
+  // Per-component fill: one recolored <defs> entry per distinct override color,
+  // so each instance <use> can point at its own colored source. PRD components.
+  const overrideColors = Array.from(
+    new Set(Object.values(layer.components).map((c) => c.fill).filter((f): f is string => !!f))
+  );
+  const colorDefId = new Map(overrideColors.map((c, n) => [c, `${motifId}-c${n}`]));
+  const hrefForIndex = (i: number) => {
+    const f = layer.components[i]?.fill;
+    return f ? `#${colorDefId.get(f)}` : `#${motifId}`;
+  };
 
   // `alt` tags the second (seam-half) pass so the two passes are distinguishable;
   // both carry `instance` so the imperative sweep updates them together.
@@ -61,7 +74,7 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
               <use
                 data-i={i}
                 className={alt ? "instance alt" : "instance"}
-                href={`#${motifId}`}
+                href={hrefForIndex(i)}
               />
             </g>
           </g>
@@ -73,12 +86,38 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
   return (
     <g className="layer" data-layer-id={layer.id}>
       <defs>
-        {/* Motif anchored so its center sits at local (0,0). */}
-        <g
-          id={motifId}
-          transform={`translate(${-layer.motif.anchorX},${-layer.motif.anchorY})`}
-          dangerouslySetInnerHTML={{ __html: layer.motif.innerHtml }}
-        />
+        {/* Motif anchored so its center sits at local (0,0). When the motif has
+            addressable parts, render them as individual groups (tagged for live
+            imperative part-drag) instead of one opaque blob. */}
+        {layer.motif.parts ? (
+          <g id={motifId} transform={`translate(${-layer.motif.anchorX},${-layer.motif.anchorY})`}>
+            {layer.motif.defs && <g dangerouslySetInnerHTML={{ __html: layer.motif.defs }} />}
+            {layer.motif.parts
+              .filter((part) => part.visible)
+              .map((part) => (
+                <g
+                  key={part.id}
+                  data-part-render={part.id}
+                  transform={partTransformAttr(part.transform, part.cx, part.cy) ?? undefined}
+                  dangerouslySetInnerHTML={{ __html: part.fill ? recolorMarkup(part.baseMarkup, part.fill) : part.baseMarkup }}
+                />
+              ))}
+          </g>
+        ) : (
+          <g
+            id={motifId}
+            transform={`translate(${-layer.motif.anchorX},${-layer.motif.anchorY})`}
+            dangerouslySetInnerHTML={{ __html: layer.motif.innerHtml }}
+          />
+        )}
+        {overrideColors.map((c) => (
+          <g
+            key={c}
+            id={colorDefId.get(c)}
+            transform={`translate(${-layer.motif.anchorX},${-layer.motif.anchorY})`}
+            dangerouslySetInnerHTML={{ __html: recolorMarkup(layer.motif.innerHtml, c) }}
+          />
+        ))}
         {halves && (
           <>
             <clipPath id={oppClipId} clipPathUnits="userSpaceOnUse">

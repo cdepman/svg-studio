@@ -163,6 +163,48 @@
   .lr-disclosure { width: 16px; height: 16px; display: grid; place-items: center; color: var(--muted); flex: none; background: none; border: none; }
   .lr-disclosure svg { width: 11px; height: 11px; transition: transform .12s; }
   .lr-disclosure.collapsed svg { transform: rotate(-90deg); }
+  .lr-disclosure.clickable { cursor: pointer; }
+  .lr-disclosure.clickable:hover { color: var(--text); }
+  .lr-disclosure.clickable svg { transform: rotate(-90deg); }
+  .lr-disclosure.clickable.open svg { transform: rotate(0deg); }
+  /* motif sub-part rows: a touch smaller/dimmer than layer rows */
+  .layer-row.part-row { padding-top: 2px; padding-bottom: 2px; }
+  .layer-row.part-row .lr-thumb.part { width: 22px; height: 22px; background: var(--canvas); }
+  .layer-row.part-row .lr-name { font-size: 11.5px; color: var(--muted); }
+  .layer-row.part-row.part-hidden .lr-name { color: var(--faint); text-decoration: line-through; }
+  .lr-thumb.part.is-hidden { opacity: 0.35; }
+
+  /* on-canvas sub-part edit overlay */
+  .part-hit { fill: transparent; stroke: color-mix(in oklch, var(--mode) 55%, transparent);
+    stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; cursor: move; }
+  .part-hit:hover { fill: color-mix(in oklch, var(--mode) 10%, transparent); stroke-dasharray: none; }
+  .part-hit.selected { fill: color-mix(in oklch, var(--mode) 8%, transparent);
+    stroke: var(--mode); stroke-width: 1.5; stroke-dasharray: none; }
+  .part-rotate { cursor: grab; }
+  .part-rotate-line { stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .part-rotate-knob { fill: #fff; stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+
+  /* part inspector (right column, shown when a sub-part is selected) */
+  .part-inspector { background: var(--panel-2); border: 1px solid var(--line-2);
+    border-radius: 10px; margin: 8px; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .part-inspector-head { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+  .part-inspector-crumb { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px; }
+  .part-inspector-head svg { color: var(--faint); transform: rotate(-90deg); }
+  .part-inspector-name { color: var(--text); font-weight: 600; }
+  .part-done { color: var(--mode); font-size: 14px; }
+  .part-row-controls { display: flex; align-items: center; gap: 8px; }
+  .part-swatch { width: 34px; height: 26px; border-radius: 7px; cursor: pointer; position: relative; overflow: hidden;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.3), inset 0 0 0 2px rgba(255,255,255,0.12); }
+  .part-swatch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .part-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .part-field { display: flex; flex-direction: column; gap: 2px; }
+  .part-field span { font-family: var(--mono); font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+  .part-field input { width: 100%; background: var(--bg); border: 1px solid var(--line-2); border-radius: 6px;
+    color: var(--text); font: inherit; font-size: 12.5px; padding: 4px 6px; outline: none; }
+  .part-field input:focus { border-color: var(--mode); }
+  .part-reset { display: flex; align-items: center; justify-content: center; gap: 5px; background: var(--panel-3);
+    border: 1px solid var(--line-2); border-radius: 7px; color: var(--muted); font-size: 11.5px; padding: 5px; cursor: pointer; }
+  .part-reset:hover { color: var(--text); }
   .lr-thumb {
     width: 28px; height: 28px; border-radius: 5px; flex: none; background: var(--canvas);
     display: grid; place-items: center; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line-2);
@@ -440,3 +482,27 @@
   /* dot grid on the artboard */
   .canvas-area { background-image: radial-gradient(var(--canvas-dot) 1.3px, transparent 1.3px); background-size: 24px 24px; }
   .canvas-area.mode-animate { background-image: radial-gradient(var(--canvas-dot) 1.3px, transparent 1.3px); }
+
+  /* gizmo rotate knob */
+  .gizmo-rotate { cursor: grab; }
+  .gizmo-rotate-line { stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .gizmo-rotate-knob { fill: #fff; stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+
+  /* individual-component gizmo: a frame hugging the copy + corner resize handles
+     + a rotate knob — mirrors the composite selection gizmo. */
+  .component-frame { fill: transparent; stroke: var(--mode); stroke-width: 1.5;
+    stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; cursor: move; }
+  .component-handle { fill: #fff; stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .component-rotate { cursor: grab; }
+  .component-rotate-line { stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .component-rotate-knob { fill: #fff; stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .component-angle { fill: var(--mode); font-family: var(--mono); font-weight: 600;
+    text-anchor: middle; dominant-baseline: middle; pointer-events: none;
+    paint-order: stroke; stroke: var(--panel); stroke-width: 3px; vector-effect: non-scaling-stroke; }
+
+  /* tool rail color swatch + separator */
+  .tool-rail-sep { height: 1px; background: var(--line-2); margin: 3px 6px; }
+  .tool-swatch { width: 38px; height: 28px; border-radius: 8px; cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.3), inset 0 0 0 2px rgba(255,255,255,0.12);
+    display: block; position: relative; overflow: hidden; }
+  .tool-swatch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }

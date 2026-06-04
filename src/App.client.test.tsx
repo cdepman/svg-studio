@@ -212,6 +212,18 @@ describe("App layer interactions", () => {
     expect(valByLabel("Count")).toBe("—");
   });
 
+  it("the color swatch recolors the selected layer's fill", () => {
+    const swatch = container.querySelector(".tool-swatch input[type=color]")! as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(swatch, "#ff0000");
+      swatch.dispatchEvent(new Event("input", { bubbles: true }));
+      swatch.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    // the selected layer's motif now renders with the new fill
+    expect(canvas().querySelector('.layer [fill="#ff0000"]')).not.toBeNull();
+  });
+
   it("grabbing a layer's artwork and dragging moves its center", () => {
     const centerRoot = () => canvas().querySelector(".layer .layer-center-root")!;
     expect(centerRoot().getAttribute("transform")).toBe("translate(0,0)");

@@ -9,6 +9,8 @@ export interface RepeatParams {
   /** Distance from the repeat center to the motif anchor (motif center). PRD §8. */
   radiusOffset: number;
   sourceRotation: number;
+  /** Uniform size of each copy on its own center (resize one petal => all). 1 = intrinsic. */
+  sourceScale: number;
   orientationMode: OrientationMode;
   mirrorAlternates: boolean;
   // Secondary controls (PRD §1): progressive across copies.
@@ -40,10 +42,55 @@ export interface Box {
   height: number;
 }
 
+/** Non-destructive per-part transform, applied about the part's own center. */
+export interface PartTransform {
+  tx: number;
+  ty: number;
+  /** Degrees, about (cx,cy). */
+  rotation: number;
+  scale: number;
+}
+
+export const IDENTITY_PART_TRANSFORM: PartTransform = { tx: 0, ty: 0, rotation: 0, scale: 1 };
+
+/**
+ * One addressable piece of a motif — a single paintable element (with its
+ * ancestor transforms baked into `baseMarkup`), so an imported SVG's sub-paths
+ * become first-class objects. Edits are non-destructive: `baseMarkup` is the
+ * imported geometry; `transform` and `fill` layer on top and the rendered markup
+ * is derived from them. PRD §6.
+ */
+export interface MotifPart {
+  id: string;
+  /** Display name in the layer tree (element id, nearest group id, or "Path N"). */
+  name: string;
+  /** Element markup as imported: own + ancestor transforms baked in. Immutable. */
+  baseMarkup: string;
+  /** Intrinsic center of `baseMarkup` in motif-local space — the rotate/scale pivot. */
+  cx: number;
+  cy: number;
+  /** Intrinsic bounding-box size in motif-local space — for the on-canvas hit-rect. */
+  w: number;
+  h: number;
+  /** Editable move/rotate/scale layered on top of `baseMarkup`. */
+  transform: PartTransform;
+  /** Editable non-destructive color override (fill + stroke). */
+  fill?: string;
+  visible: boolean;
+}
+
 /** A sanitized, anchor-normalized imported (or default) motif. */
 export interface Motif {
-  /** Sanitized inner SVG markup, mounted via <g id="motif"> in <defs>. */
+  /**
+   * Sanitized inner SVG markup, mounted via <g id="motif"> in <defs>. This is
+   * the single rendered source of truth — when `parts` exist it is kept derived
+   * from them (defs preamble + visible parts). PRD §6, §11.
+   */
   innerHtml: string;
+  /** Addressable sub-parts (imported SVGs / drawn shapes). Absent for legacy motifs. */
+  parts?: MotifPart[];
+  /** Non-paintable preamble (e.g. <defs>/gradients) preserved across part edits. */
+  defs?: string;
   /** Intrinsic center (icx, icy) = box center. The motif is offset by -anchor. PRD §6. */
   anchorX: number;
   anchorY: number;
@@ -92,6 +139,18 @@ export interface LayerGroup {
 }
 
 /**
+ * Per-component (per-instance) overrides on top of the parametric repeat. The
+ * base arrangement (count/radius/angle/rotation) stays symmetric; individual
+ * components can override their appearance. Keyed by instance index (sparse).
+ * Extensible — today just fill, later individual transform etc.
+ */
+export interface ComponentOverride {
+  fill?: string;
+}
+
+export type ComponentOverrides = Record<number, ComponentOverride>;
+
+/**
  * A flat layer: one radial-repeat composition. No nesting, no folders. PRD §4.
  * `center` is kept off RepeatParams on purpose so the repeat math stays
  * center-independent (instances never reference the center).
@@ -106,6 +165,8 @@ export interface Layer {
   center: Center;
   /** Uniform scale of the whole composition (ring + petals). Resize gizmo. */
   scale: number;
+  /** Per-component overrides (color now). Sparse, keyed by instance index. */
+  components: ComponentOverrides;
   /** Optional straight-line center-path animation. */
   animation?: LayerAnimation;
   createdAt: number;

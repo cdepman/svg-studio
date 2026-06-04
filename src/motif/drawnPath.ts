@@ -7,6 +7,7 @@
 // A drawn shape is NOT a special case — it becomes a Motif exactly like an
 // imported SVG (centered on its bbox via anchorX/anchorY). PRD §5, §13, §14.
 import { getStrokePoints } from "perfect-freehand";
+import { singlePart } from "./parts";
 import type { Box, Center, Motif } from "../types";
 
 export interface PencilSettings {
@@ -14,14 +15,15 @@ export interface PencilSettings {
   size: number;
   /** 0..100 — maps to perfect-freehand streamline + smoothing. PRD §11. */
   smoothing: number;
-  fillColor: string;
 }
 
 export const DEFAULT_PENCIL: PencilSettings = {
   size: 18,
   smoothing: 55,
-  fillColor: "#7c93ff",
 };
+
+/** The default fill for new shapes; user-changeable via the color swatch. */
+export const DEFAULT_FILL = "#7c93ff";
 
 /** Map the single 0..100 smoothing control to perfect-freehand options. PRD §11. */
 function strokeOptions(size: number, smoothing: number) {
@@ -149,7 +151,15 @@ export function createDrawnMotif(
   if (!sp) return null;
   const c = boxCenter(sp.box);
   return {
-    motif: { innerHtml: sp.pathHtml, anchorX: c.x, anchorY: c.y, box: sp.box, weight: 1, simplified: false },
+    motif: {
+      innerHtml: sp.pathHtml,
+      parts: [singlePart(sp.pathHtml, "Shape 1", sp.box)],
+      anchorX: c.x,
+      anchorY: c.y,
+      box: sp.box,
+      weight: 1,
+      simplified: false,
+    },
     worldCenter: c,
   };
 }

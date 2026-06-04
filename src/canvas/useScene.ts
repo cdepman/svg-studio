@@ -54,6 +54,7 @@ export type NumericParamKey =
   | "angleOffset"
   | "radiusOffset"
   | "sourceRotation"
+  | "sourceScale"
   | "scaleStep"
   | "opacityStep";
 
@@ -63,6 +64,8 @@ export interface Scene {
   layersRootRef: React.RefObject<SVGGElement>;
   /** The selection gizmo group (frame + handles + duplicate button). */
   gizmoRef: React.RefObject<SVGGElement>;
+  /** The single-component edit overlay (box + rotate knob), moved imperatively. */
+  componentUiRef: React.RefObject<SVGGElement>;
 
   dragTargetsRef: React.MutableRefObject<DragTargetSpec[]>;
   /** Specs for ALL editable layers (by id), so a move can target any grabbed
@@ -78,6 +81,8 @@ export interface Scene {
 
   collectDragTargets: () => ResolvedTarget[];
   applyParamDelta: (key: NumericParamKey, delta: number) => void;
+  /** Apply several param deltas at once (e.g. radius + angle for a component move). */
+  applyParamDeltas: (deltas: Partial<Record<NumericParamKey, number>>) => void;
   /** Re-lay the gizmo frame/handles/button from union bounds (imperative). */
   applyGizmo: (b: GBounds) => void;
 }
@@ -87,6 +92,7 @@ export function useScene(): Scene {
   const panZoomRef = useRef<SVGGElement>(null);
   const layersRootRef = useRef<SVGGElement>(null);
   const gizmoRef = useRef<SVGGElement>(null);
+  const componentUiRef = useRef<SVGGElement>(null);
   const dragTargetsRef = useRef<DragTargetSpec[]>([]);
   const allSpecsRef = useRef<Map<string, DragTargetSpec>>(new Map());
   const selectedLayerIdRef = useRef<string | null>(null);
@@ -165,13 +171,15 @@ export function useScene(): Scene {
     });
     const actions = g.querySelector(".gizmo-action-menu");
     actions?.setAttribute("transform", `translate(${b.hw + GIZMO_DUP_GAP * inv},${-b.hh - GIZMO_DUP_GAP * inv}) scale(${inv})`);
+    g.querySelector(".gizmo-rotate")?.setAttribute("transform", `translate(0,${-b.hh})`);
   }, []);
 
-  const applyParamDelta = useCallback(
-    (key: NumericParamKey, delta: number) => {
+  const applyParamDeltas = useCallback(
+    (deltas: Partial<Record<NumericParamKey, number>>) => {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const t of dragTargetsRef.current) {
-        const p: RepeatParams = { ...t.params, [key]: t.params[key] + delta };
+        const p: RepeatParams = { ...t.params };
+        for (const k in deltas) p[k as NumericParamKey] = t.params[k as NumericParamKey] + deltas[k as NumericParamKey]!;
         const root = repeatRootOf(t.id);
         if (root) {
           root.querySelectorAll<SVGGElement>(".instance-placement").forEach((g) => {
@@ -233,12 +241,18 @@ export function useScene(): Scene {
     [repeatRootOf, seamClipsOf, applyGizmo]
   );
 
+  const applyParamDelta = useCallback(
+    (key: NumericParamKey, delta: number) => applyParamDeltas({ [key]: delta }),
+    [applyParamDeltas]
+  );
+
   return useMemo(
     () => ({
       svgRef,
       panZoomRef,
       layersRootRef,
       gizmoRef,
+      componentUiRef,
       dragTargetsRef,
       allSpecsRef,
       selectedLayerIdRef,
@@ -247,8 +261,9 @@ export function useScene(): Scene {
       resolveRepeatRoot: repeatRootOf,
       collectDragTargets,
       applyParamDelta,
+      applyParamDeltas,
       applyGizmo,
     }),
-    [screenToWorld, repeatRootOf, collectDragTargets, applyParamDelta, applyGizmo]
+    [screenToWorld, repeatRootOf, collectDragTargets, applyParamDelta, applyParamDeltas, applyGizmo]
   );
 }
