@@ -5,7 +5,7 @@
 // selection gizmo: a frame around the union of the selected layers, with corner
 // resize handles and a compact selection-action menu.
 import { useEffect, useRef, useState } from "react";
-import { GIZMO_DUP_GAP, GIZMO_HANDLE, ROTATE_GAP, isHeavy } from "../config";
+import { GIZMO_HANDLE, ROTATE_GAP, isHeavy } from "../config";
 import { LayerArt } from "./LayerArt";
 import { pencilPreviewPath, type PencilSettings } from "../motif/drawnPath";
 import { PartEditLayer } from "./PartEditLayer";
@@ -28,6 +28,8 @@ interface CanvasProps {
   selectedIds: Set<string>;
   /** Selection gizmo bounds (union of selected, editable layers), or null. */
   gizmo: GBounds | null;
+  /** Per-layer outline boxes when several are selected (id + bounds). */
+  selectionBoxes: (GBounds & { id: string })[];
   /** Which layer+copy is in single-component edit mode, or null. */
   componentEdit: { layerId: string; index: number } | null;
   onComponentSelect: (layerId: string, index: number) => void;
@@ -59,11 +61,6 @@ interface CanvasProps {
   onMotionPathCommit: (handle: "start" | "end", point: Center) => void;
   onResizePointerDown: (e: React.PointerEvent) => void;
   onRotatePointerDown: (e: React.PointerEvent) => void;
-  onDuplicateSelected: () => void;
-  onGroupSelection: () => void;
-  onUngroupSelection: () => void;
-  canGroupSelection: boolean;
-  canUngroupSelection: boolean;
   /** Zoom the canvas at an svg-local point. */
   onZoom: (lx: number, ly: number, deltaY: number) => void;
   panBy: (dx: number, dy: number) => void;
@@ -73,6 +70,7 @@ export function Canvas({
   layers,
   selectedIds,
   gizmo,
+  selectionBoxes,
   componentEdit,
   onComponentSelect,
   onComponentExit,
@@ -99,11 +97,6 @@ export function Canvas({
   onMotionPathCommit,
   onResizePointerDown,
   onRotatePointerDown,
-  onDuplicateSelected,
-  onGroupSelection,
-  onUngroupSelection,
-  canGroupSelection,
-  canUngroupSelection,
   onZoom,
   panBy,
 }: CanvasProps) {
@@ -135,7 +128,6 @@ export function Canvas({
     queued: false,
   });
   const [marquee, setMarquee] = useState<WorldRect | null>(null);
-  const [actionMenuOpen, setActionMenuOpen] = useState(false);
 
   const normRect = (a: Center, b: Center): WorldRect => ({
     minX: Math.min(a.x, b.x),
@@ -291,7 +283,6 @@ export function Canvas({
     // The gizmo (resize handles + selection menu), component overlay and part
     // overlay own their own pointerdowns.
     if ((e.target as Element).closest?.(".gizmo, .motion-path-ui, .component-ui, .part-edit-overlay")) return;
-    setActionMenuOpen(false);
 
     // A click anywhere outside the component/part overlays exits those edit
     // modes (then falls through to normal select/marquee behavior).
@@ -453,6 +444,19 @@ export function Canvas({
               height={marquee.maxY - marquee.minY}
             />
           )}
+          {/* Per-layer selection outlines (hidden mid-drag — they'd lag the live
+              union gizmo, which updates imperatively). */}
+          {!dragging &&
+            selectionBoxes.map((b) => (
+              <rect
+                key={b.id}
+                className="selection-box"
+                x={b.cx - b.hw}
+                y={b.cy - b.hh}
+                width={2 * b.hw}
+                height={2 * b.hh}
+              />
+            ))}
           {motionPath && (
             <g className="motion-path-ui">
               <line
@@ -517,57 +521,6 @@ export function Canvas({
                   />
                 );
               })}
-              {/* Selection action menu, drawn in screen px via scale(inv). */}
-              <g
-                className="gizmo-action-menu"
-                transform={`translate(${gizmo.hw + GIZMO_DUP_GAP * inv},${-gizmo.hh - GIZMO_DUP_GAP * inv}) scale(${inv})`}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                }}
-              >
-                {actionMenuOpen && (
-                  <>
-                    <g
-                      className="gizmo-action"
-                      transform="translate(0,-32)"
-                      onClick={() => {
-                        onDuplicateSelected();
-                        setActionMenuOpen(false);
-                      }}
-                    >
-                      <title>Duplicate selection</title>
-                      <circle r={11} />
-                      <path className="gizmo-icon" d="M -4 -3 H 3 V 4 H -4 Z M -1 -6 H 6 V 1" />
-                    </g>
-                    <g
-                      className={canGroupSelection || canUngroupSelection ? "gizmo-action" : "gizmo-action disabled"}
-                      transform="translate(32,0)"
-                      onClick={() => {
-                        if (canUngroupSelection) onUngroupSelection();
-                        else if (canGroupSelection) onGroupSelection();
-                        setActionMenuOpen(false);
-                      }}
-                    >
-                      <title>{canUngroupSelection ? "Ungroup selection" : "Group selection"}</title>
-                      <circle r={11} />
-                      {canUngroupSelection ? (
-                        <path className="gizmo-icon" d="M -6 -5 H -1 V 0 H -6 Z M 1 0 H 6 V 5 H 1 Z M -1 0 L 1 0" />
-                      ) : (
-                        <path className="gizmo-icon" d="M -6 -5 H -1 V 0 H -6 Z M 1 0 H 6 V 5 H 1 Z M -1 0 L 1 0" />
-                      )}
-                    </g>
-                  </>
-                )}
-                <g
-                  className="gizmo-action primary"
-                  onClick={() => setActionMenuOpen((open) => !open)}
-                >
-                  <title>Selection actions</title>
-                  <circle r={11} />
-                  <path className="gizmo-plus" d="M -5 0 H 5 M 0 -5 V 5" />
-                </g>
-              </g>
             </g>
           )}
           {/* Individual-component gizmo: a frame that hugs the edited copy, with

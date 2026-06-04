@@ -8,7 +8,7 @@ import { useMoveDrag } from "./canvas/useMoveDrag";
 import { useResizeDrag } from "./canvas/useResizeDrag";
 import { useScene, type DragTargetSpec, type NumericParamKey } from "./canvas/useScene";
 import { useViewport } from "./canvas/useViewport";
-import { layerReach, unionBounds } from "./canvas/selectionBounds";
+import { layerReach, perLayerBounds, unionBounds } from "./canvas/selectionBounds";
 import { Controls } from "./controls/Controls";
 import { LayersPanel, type MoveDir } from "./layers/LayersPanel";
 import { Icon } from "./ui/icons";
@@ -193,6 +193,12 @@ export default function App() {
   }, [layers, primaryId, editableSelected]);
 
   const gizmo = useMemo(() => unionBounds(editableSelected), [editableSelected]);
+  // When several layers are selected, outline each one (the gizmo itself is just
+  // the union frame + handles). Single selection needs no extra box.
+  const selectionBoxes = useMemo(
+    () => (editableSelected.length > 1 ? perLayerBounds(editableSelected) : []),
+    [editableSelected]
+  );
   // Animation can be added/edited whenever ≥1 editable layer is selected; it
   // applies to the whole selection in synchrony (like the repeat params).
   const animationEditable = editableSelected.length > 0;
@@ -405,20 +411,22 @@ export default function App() {
     );
   };
 
+  // Remembers the layer grabbed for a move and whether it was part of a
+  // multi-selection, so a click (no drag) on it can isolate it.
+  const lastGrab = useRef<{ id: string; multi: boolean } | null>(null);
   const moveBegin = useMoveDrag(scene, {
     onStart: () => setDragging(true),
     onCommit: (ids, delta) => {
-      // Single React commit applying the gesture delta to every grabbed layer.
-      if (delta.x !== 0 || delta.y !== 0) {
+      const moved = Math.hypot(delta.x, delta.y) >= 1;
+      if (moved) {
+        // Single React commit applying the gesture delta to every grabbed layer.
         const idset = new Set(ids);
-        updateLayers((ls) =>
-          ls.map((l) =>
-            idset.has(l.id)
-              ? moveLayerWithAnimation(l, delta)
-              : l
-          )
-        );
+        updateLayers((ls) => ls.map((l) => (idset.has(l.id) ? moveLayerWithAnimation(l, delta) : l)));
+      } else if (lastGrab.current?.multi) {
+        // A click (no drag) on a layer inside a multi-selection isolates it.
+        selectSingle(lastGrab.current.id);
       }
+      lastGrab.current = null;
       setDragging(false);
     },
   });
@@ -607,10 +615,12 @@ export default function App() {
       return;
     }
     const groupIds = groupForLayer(docRef.current.groups, id)?.layerIds ?? [id];
-    const moveIds = selectedSet.has(id)
+    const alreadySelected = selectedSet.has(id);
+    const moveIds = alreadySelected
       ? [...editableIdsRef.current]
       : groupIds.filter((memberId) => docRef.current.layers.some((l) => l.id === memberId && l.visible && !l.locked));
-    if (!selectedSet.has(id)) selectSingle(id);
+    lastGrab.current = { id, multi: alreadySelected && editableIdsRef.current.size > 1 };
+    if (!alreadySelected) selectSingle(id);
     moveBegin(e, moveIds);
   };
 
@@ -1198,6 +1208,7 @@ export default function App() {
             layers={layers}
             selectedIds={selectedSet}
             gizmo={componentEdit || partEdit ? null : gizmo}
+            selectionBoxes={componentEdit || partEdit ? [] : selectionBoxes}
             componentEdit={componentEdit}
             onComponentSelect={enterComponentEdit}
             onComponentExit={exitComponentEdit}
@@ -1224,11 +1235,6 @@ export default function App() {
             onMotionPathCommit={commitMotionPathPoint}
             onResizePointerDown={onResizePointerDown}
             onRotatePointerDown={onRotatePointerDown}
-            onDuplicateSelected={onDuplicateSelected}
-            onGroupSelection={groupSelectedLayers}
-            onUngroupSelection={ungroupSelectedLayers}
-            canGroupSelection={canGroupSelection}
-            canUngroupSelection={canUngroupSelection}
             onZoom={zoomAt}
             panBy={panBy}
           />

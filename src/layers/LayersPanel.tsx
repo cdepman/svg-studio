@@ -245,6 +245,24 @@ export function LayersPanel({
                   <span className="lr-meta">{l.params.count}×{anim ? " · anim" : ""}</span>
                 </div>
                 <div className="lr-actions">
+                  <span className="lr-reorder">
+                    <button
+                      className="lr-ico is-quiet lr-move up"
+                      disabled={dragging}
+                      onPointerDown={(e) => { e.stopPropagation(); onMove(l.id, "forward"); }}
+                      title="Move up (toward front)"
+                    >
+                      {Icon.chevron({ size: 13 })}
+                    </button>
+                    <button
+                      className="lr-ico is-quiet lr-move down"
+                      disabled={dragging}
+                      onPointerDown={(e) => { e.stopPropagation(); onMove(l.id, "backward"); }}
+                      title="Move down (toward back)"
+                    >
+                      {Icon.chevron({ size: 13 })}
+                    </button>
+                  </span>
                   <button
                     className={`lr-ico is-quiet${l.locked ? " lock-on" : ""}`}
                     disabled={dragging}

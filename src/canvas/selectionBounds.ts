@@ -16,6 +16,17 @@ export function layerReach(params: RepeatParams, box: Box, scale: number): numbe
   return boundsReach(params, box) * scale;
 }
 
+/** Each layer's own artwork box (for showing every selected box, not just the union). */
+export interface LayerBound extends GBounds {
+  id: string;
+}
+export function perLayerBounds(layers: Layer[]): LayerBound[] {
+  return layers.map((l) => {
+    const r = layerReach(l.params, l.motif.box, l.scale);
+    return { id: l.id, cx: l.center.x, cy: l.center.y, hw: r, hh: r };
+  });
+}
+
 /** Union AABB of the given layers' artwork boxes, or null if empty. */
 export function unionBounds(layers: Layer[]): GBounds | null {
   if (layers.length === 0) return null;

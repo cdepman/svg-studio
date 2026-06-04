@@ -216,6 +216,10 @@
   .lr-name input { width: 100%; background: var(--bg); border: 1px solid var(--mode); border-radius: 4px; color: var(--text); font: inherit; padding: 1px 4px; outline: none; }
   .lr-meta { font-family: var(--mono); font-size: 10px; color: var(--faint); white-space: nowrap; }
   .lr-actions { display: flex; align-items: center; gap: 1px; flex: none; }
+  .lr-reorder { display: inline-flex; align-items: center; }
+  .lr-move { width: 20px; color: var(--muted); }
+  .lr-move:hover { color: var(--text); }
+  .lr-move.up svg { transform: rotate(180deg); }
   .lr-ico { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 5px; background: none; border: none; color: var(--faint); }
   .lr-ico:hover { background: var(--panel-3); color: var(--text); }
   .lr-ico.on { color: var(--muted); }
@@ -439,6 +443,8 @@
   .layers-root .layer { cursor: move; }
 
   .gizmo-frame { stroke: var(--mode); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+  .selection-box { fill: none; stroke: color-mix(in oklch, var(--mode) 60%, transparent); stroke-width: 1;
+    stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; pointer-events: none; }
   .gizmo-handle { fill: #fff; stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
   .gizmo-action-menu { cursor: pointer; }
   .gizmo-action circle { fill: var(--mode); }
