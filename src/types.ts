@@ -12,7 +12,6 @@ export interface RepeatParams {
   /** Uniform size of each copy on its own center (resize one petal => all). 1 = intrinsic. */
   sourceScale: number;
   orientationMode: OrientationMode;
-  mirrorAlternates: boolean;
   // Secondary controls (PRD §1): progressive across copies.
   scaleStep: number;
   opacityStep: number;
@@ -130,6 +129,45 @@ export interface CenterPathAnimation {
 
 export type LayerAnimation = CenterPathAnimation;
 
+// --- Concurrent, looping ambient effects (independent of the center path).
+// Each is realized as an infinite CSS @keyframes loop; they compose with each
+// other and with the center-path motion. PRD §ANIM.
+export type EffectDirection = "cw" | "ccw";
+
+/** Each copy rotates around its own center. `stagger` sends the spin around the ring. */
+export interface IndividualSpinEffect {
+  enabled: boolean;
+  periodSeconds: number;
+  direction: EffectDirection;
+  stagger: boolean;
+}
+/** The whole ring rotates around the layer center. */
+export interface CompositeSpinEffect {
+  enabled: boolean;
+  periodSeconds: number;
+  direction: EffectDirection;
+}
+/** Copies breathe (scale up/down). `amount` is the peak extra scale (0..1). */
+export interface ScalePulseEffect {
+  enabled: boolean;
+  periodSeconds: number;
+  amount: number;
+  stagger: boolean;
+}
+/** Copies move in/out along their spoke. `amount` is world px of travel. */
+export interface RadialPulseEffect {
+  enabled: boolean;
+  periodSeconds: number;
+  amount: number;
+  stagger: boolean;
+}
+export interface LayerEffects {
+  individualSpin: IndividualSpinEffect;
+  compositeSpin: CompositeSpinEffect;
+  scalePulse: ScalePulseEffect;
+  radialPulse: RadialPulseEffect;
+}
+
 export interface LayerGroup {
   id: string;
   name: string;
@@ -169,6 +207,8 @@ export interface Layer {
   components: ComponentOverrides;
   /** Optional straight-line center-path animation. */
   animation?: LayerAnimation;
+  /** Optional concurrent looping effects (spin/pulse), independent of `animation`. */
+  effects?: LayerEffects;
   createdAt: number;
   updatedAt: number;
 }

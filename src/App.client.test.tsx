@@ -122,7 +122,7 @@ describe("App layer interactions", () => {
 
   it("creates a center-path animation and toggles playback", () => {
     setMode("animate");
-    click(button("Add animation"));
+    click(button("Add motion path"));
     expect(canvas().querySelector(".motion-path-line")).toBeTruthy();
     expect(container.textContent).toContain("Duration");
 
@@ -140,7 +140,7 @@ describe("App layer interactions", () => {
     newLayer(); // 2 layers
     selectAll();
     setMode("animate");
-    click(button("Add animation"));
+    click(button("Add motion path"));
     // both layers now report animation in the panel meta
     expect((container.textContent?.match(/· anim/g) ?? []).length).toBe(2);
     // and both have animated repeat wrappers on the canvas
@@ -149,7 +149,7 @@ describe("App layer interactions", () => {
 
   it("keeps the tucked still-frame ordering when entering animation edit mode", () => {
     setMode("animate");
-    click(button("Add animation"));
+    click(button("Add motion path"));
     expect(canvas().querySelectorAll("clipPath[id^='seam-']")).toHaveLength(2);
     expect(instances()).toHaveLength(12);
     expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper")).toHaveLength(24);
@@ -157,7 +157,7 @@ describe("App layer interactions", () => {
 
   it("allows dragging the center-path start handle", () => {
     setMode("animate");
-    click(button("Add animation"));
+    click(button("Add motion path"));
     const start = canvas().querySelector(".motion-path-start")!;
     const line = canvas().querySelector(".motion-path-line")!;
     act(() => start.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 20, button: 0 })));
@@ -168,7 +168,7 @@ describe("App layer interactions", () => {
 
   it("keeps animated repeat instances synchronized when count changes during playback", () => {
     setMode("animate");
-    click(button("Add animation"));
+    click(button("Add motion path"));
     click(button("Preview"));
     setRange(sliderByLabel("Count"), 24);
     expect(instances()).toHaveLength(24);

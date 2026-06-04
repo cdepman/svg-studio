@@ -34,7 +34,6 @@ const params: RepeatParams = {
   sourceRotation: 0,
   sourceScale: 1,
   orientationMode: "rotateWithCircle",
-  mirrorAlternates: false,
   scaleStep: 0,
   opacityStep: 0,
   paintOffset: 0,
@@ -59,6 +58,20 @@ describe("duplicateLayer", () => {
     expect(dup.center).not.toBe(a.center);
     expect(dup.visible).toBe(a.visible);
     expect(dup.locked).toBe(a.locked);
+  });
+
+  it("deep-copies effects so editing the copy doesn't touch the original", () => {
+    const a = mk("A");
+    a.effects = {
+      individualSpin: { enabled: true, periodSeconds: 6, direction: "cw", stagger: false },
+      compositeSpin: { enabled: false, periodSeconds: 12, direction: "cw" },
+      scalePulse: { enabled: true, periodSeconds: 3, amount: 0.2, stagger: false },
+      radialPulse: { enabled: false, periodSeconds: 3, amount: 40, stagger: false },
+    };
+    const dup = duplicateLayer(a);
+    dup.effects!.scalePulse.amount = 0.9;
+    expect(a.effects!.scalePulse.amount).toBe(0.2);
+    expect(dup.effects!.individualSpin.enabled).toBe(true);
   });
 });
 

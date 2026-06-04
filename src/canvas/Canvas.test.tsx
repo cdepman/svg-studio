@@ -15,7 +15,6 @@ const params: RepeatParams = {
   sourceRotation: 0,
   sourceScale: 1,
   orientationMode: "rotateWithCircle",
-  mirrorAlternates: false,
   scaleStep: 0,
   opacityStep: 0,
   paintOffset: 0,

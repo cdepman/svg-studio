@@ -18,6 +18,7 @@ import {
 } from "./repeatMath";
 import { PROXY_CAP } from "../config";
 import { animationReachPadding, instanceMotionStyle, motionClassName } from "../motion/centerPath";
+import { effectsReachPadding, instanceEffectStyle, isLayerAnimated } from "../motion/effects";
 import { recolorMarkup } from "../motif/recolor";
 import { partTransformAttr } from "../motif/parts";
 import type { Layer } from "../types";
@@ -36,8 +37,13 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
   const oppClipId = `seam-opp-${layer.id}`;
   const seamClipId = `seam-half-${layer.id}`;
 
+  const animated = isLayerAnimated(layer);
   const showTuck = p.tuck && !proxy;
-  const halves = showTuck ? seamHalves(p, layer.motif.box, animationReachPadding(layer)) : null;
+  const halves = showTuck
+    ? seamHalves(p, layer.motif.box, animationReachPadding(layer) + effectsReachPadding(layer))
+    : null;
+  const e = layer.effects;
+  const compositeSpin = !!e?.compositeSpin.enabled;
 
   // Per-component fill: one recolored <defs> entry per distinct override color,
   // so each instance <use> can point at its own colored source. PRD components.
@@ -51,31 +57,37 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
   };
 
   // `alt` tags the second (seam-half) pass so the two passes are distinguishable;
-  // both carry `instance` so the imperative sweep updates them together.
-  const instanceKeyPrefix = layer.animation?.enabled
-    ? `${p.count}:${p.angleOffset}:${p.radiusOffset}:${layer.scale}`
+  // both carry `instance` so the imperative sweep updates them together. The
+  // effects signature is in the key so toggling an effect remounts cleanly.
+  const effectSig = e
+    ? `${+e.individualSpin.enabled}${+e.compositeSpin.enabled}${+e.scalePulse.enabled}${+e.radialPulse.enabled}`
+    : "";
+  const instanceKeyPrefix = animated
+    ? `${p.count}:${p.angleOffset}:${p.radiusOffset}:${layer.scale}:${effectSig}`
     : "";
   const Use = (i: number, alt = false) => (
-    <g
-      key={`${instanceKeyPrefix}:${alt ? `${i}-alt` : i}`}
-    >
+    <g key={`${instanceKeyPrefix}:${alt ? `${i}-alt` : i}`}>
       <g
         data-i={i}
         className="instance-placement"
-        transform={layer.animation?.enabled ? instanceSpokeTransform(p, i) : instanceTransform(p, i)}
+        transform={animated ? instanceSpokeTransform(p, i) : instanceTransform(p, i)}
         opacity={instanceOpacity(p, i)}
       >
-        <g
-          className={`instance-motion-wrapper motion-wrapper ${motionClassName(layer.id)}`}
-          style={instanceMotionStyle(layer, i)}
-        >
-          <g className="instance-local-transform" transform={layer.animation?.enabled ? instanceLocalTransform(p, i) : undefined}>
-            <g className="instance-follow-wrapper">
-              <use
-                data-i={i}
-                className={alt ? "instance alt" : "instance"}
-                href={hrefForIndex(i)}
-              />
+        {/* radial-pulse wrapper: translateX runs along the spoke (outward). */}
+        <g className="instance-radial-wrapper" style={instanceEffectStyle(layer, i)}>
+          <g
+            className={`instance-motion-wrapper motion-wrapper ${motionClassName(layer.id)}`}
+            style={instanceMotionStyle(layer, i)}
+          >
+            <g className="instance-local-transform" transform={animated ? instanceLocalTransform(p, i) : undefined}>
+              {/* spin + pulse wrappers rotate/scale the copy about its own center. */}
+              <g className="instance-spin-wrapper">
+                <g className="instance-pulse-wrapper">
+                  <g className="instance-follow-wrapper">
+                    <use data-i={i} className={alt ? "instance alt" : "instance"} href={hrefForIndex(i)} />
+                  </g>
+                </g>
+              </g>
             </g>
           </g>
         </g>
@@ -137,7 +149,7 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
         className="layer-center-root"
         transform={`translate(${layer.center.x},${layer.center.y})`}
       >
-        <g className="repeat-root">
+        <g className={compositeSpin ? `repeat-root composite-spin ${motionClassName(layer.id)}-composite` : "repeat-root"}>
           <g className="repeat-scale" transform={`scale(${layer.scale})`}>
             {halves ? (
               <>

@@ -33,7 +33,6 @@ export function instanceSpokeTransform(p: RepeatParams, i: number): string {
 export function instanceLocalTransform(p: RepeatParams, i: number): string {
   const angle = p.angleOffset + i * angleStep(p.count);
   const scale = (1 + i * p.scaleStep) * p.sourceScale; // scaleStep can be negative
-  const mirror = p.mirrorAlternates && i % 2 === 1 ? -1 : 1;
 
   const localOrientation =
     p.orientationMode === "rotateWithCircle"
@@ -42,9 +41,7 @@ export function instanceLocalTransform(p: RepeatParams, i: number): string {
       : // cancel the spoke angle: identical screen orientation for every copy
         `rotate(${f(p.sourceRotation - angle)})`;
 
-  const scaleStr = `scale(${f(mirror * scale)},${f(scale)})`;
-
-  return `${localOrientation} ${scaleStr}`;
+  return `${localOrientation} scale(${f(scale)})`;
 }
 
 export function instanceOpacity(p: RepeatParams, i: number): number {

@@ -17,7 +17,6 @@ const base: RepeatParams = {
   sourceRotation: 0,
   sourceScale: 1,
   orientationMode: "rotateWithCircle",
-  mirrorAlternates: false,
   scaleStep: 0,
   opacityStep: 0,
   paintOffset: 0,
@@ -28,13 +27,13 @@ const base: RepeatParams = {
 describe("instanceTransform", () => {
   it("places copies on evenly-spaced spokes (count 8 => 45deg step)", () => {
     expect(instanceTransform(base, 0)).toBe(
-      "rotate(0) translate(100,0) rotate(0) scale(1,1)"
+      "rotate(0) translate(100,0) rotate(0) scale(1)"
     );
     expect(instanceTransform(base, 1)).toBe(
-      "rotate(45) translate(100,0) rotate(0) scale(1,1)"
+      "rotate(45) translate(100,0) rotate(0) scale(1)"
     );
     expect(instanceTransform(base, 2)).toBe(
-      "rotate(90) translate(100,0) rotate(0) scale(1,1)"
+      "rotate(90) translate(100,0) rotate(0) scale(1)"
     );
   });
 
@@ -47,26 +46,19 @@ describe("instanceTransform", () => {
     const p: RepeatParams = { ...base, orientationMode: "keepUpright", sourceRotation: 0 };
     // copy i: placement rotate(45*i), local rotate(-45*i) -> net upright
     expect(instanceTransform(p, 1)).toBe(
-      "rotate(45) translate(100,0) rotate(-45) scale(1,1)"
+      "rotate(45) translate(100,0) rotate(-45) scale(1)"
     );
     expect(instanceTransform(p, 2)).toBe(
-      "rotate(90) translate(100,0) rotate(-90) scale(1,1)"
+      "rotate(90) translate(100,0) rotate(-90) scale(1)"
     );
-  });
-
-  it("mirrorAlternates flips x-scale on odd copies only", () => {
-    const p = { ...base, mirrorAlternates: true };
-    expect(instanceTransform(p, 0)).toContain("scale(1,1)");
-    expect(instanceTransform(p, 1)).toContain("scale(-1,1)");
-    expect(instanceTransform(p, 2)).toContain("scale(1,1)");
   });
 
   it("scaleStep applies progressively and may be negative", () => {
     const p = { ...base, scaleStep: 0.5 };
-    expect(instanceTransform(p, 2)).toContain("scale(2,2)");
-    const n = { ...base, scaleStep: -0.25, mirrorAlternates: true };
-    // i=1: scale = 0.75, mirrored -> scale(-0.75,0.75)
-    expect(instanceTransform(n, 1)).toContain("scale(-0.75,0.75)");
+    expect(instanceTransform(p, 2)).toContain("scale(2)");
+    const n = { ...base, scaleStep: -0.25 };
+    // i=1: scale = 1 + 1*(-0.25) = 0.75
+    expect(instanceTransform(n, 1)).toContain("scale(0.75)");
   });
 
   it("radiusOffset 0 stacks all copies at the center", () => {
@@ -115,7 +107,7 @@ describe("maxAbsScale", () => {
 
 describe("sourceScale", () => {
   it("scales every copy uniformly in its local transform", () => {
-    expect(instanceLocalTransform({ ...base, sourceScale: 2 }, 0)).toContain("scale(2,2)");
+    expect(instanceLocalTransform({ ...base, sourceScale: 2 }, 0)).toContain("scale(2)");
   });
 });
 

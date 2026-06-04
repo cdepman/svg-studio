@@ -18,6 +18,12 @@ import {
   motionClassName,
   referenceInstancePoint,
 } from "../motion/centerPath";
+import {
+  effectsReachPadding,
+  effectsStyles,
+  instanceEffectStyleText,
+  isLayerAnimated,
+} from "../motion/effects";
 import { recolorMarkup } from "./recolor";
 import type { Layer } from "../types";
 
@@ -41,12 +47,14 @@ function layerBounds(layer: Layer) {
 
 function animatedLayerBounds(layer: Layer) {
   const b = layerBounds(layer);
-  if (!layer.animation || layer.animation.type !== "centerPath") return b;
-  const { start, end } = animationPoints(layer.animation, referenceInstancePoint(layer));
   const { params, motif, scale } = layer;
   const halfDiag = 0.5 * Math.hypot(motif.box.width, motif.box.height) * maxAbsScale(params);
-  const deltaReach = Math.hypot(end.x - start.x, end.y - start.y);
-  const reach = (params.radiusOffset + halfDiag) * scale + deltaReach;
+  const path =
+    layer.animation && layer.animation.type === "centerPath"
+      ? animationPoints(layer.animation, referenceInstancePoint(layer))
+      : null;
+  const deltaReach = path ? Math.hypot(path.end.x - path.start.x, path.end.y - path.start.y) : 0;
+  const reach = (params.radiusOffset + halfDiag) * scale + deltaReach + effectsReachPadding(layer) * scale;
   return {
     minX: Math.min(b.minX, layer.center.x - reach),
     minY: Math.min(b.minY, layer.center.y - reach),
@@ -71,13 +79,18 @@ function layerMarkup(layer: Layer, animated: boolean): string {
     return f ? `#${colorDefId.get(f)}` : `#${motifId}`;
   };
 
+  const anim = animated && isLayerAnimated(layer);
   const useEl = (i: number, alt = false) =>
     `          <g>
-            <g class="instance-placement" transform="${animated && layer.animation?.enabled ? instanceSpokeTransform(params, i) : instanceTransform(params, i)}" opacity="${instanceOpacity(params, i)}">
-              <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}"${animated ? instanceMotionStyleText(layer, i) : ""}>
-                <g class="instance-local-transform"${animated && layer.animation?.enabled ? ` transform="${instanceLocalTransform(params, i)}"` : ""}>
-                  <g class="instance-follow-wrapper">
-                    <use${alt ? ' class="alt"' : ""} href="${hrefForIndex(i)}"/>
+            <g class="instance-placement" transform="${anim ? instanceSpokeTransform(params, i) : instanceTransform(params, i)}" opacity="${instanceOpacity(params, i)}">
+              <g class="instance-radial-wrapper"${anim ? instanceEffectStyleText(layer, i) : ""}>
+                <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}"${anim ? instanceMotionStyleText(layer, i) : ""}>
+                  <g class="instance-local-transform"${anim ? ` transform="${instanceLocalTransform(params, i)}"` : ""}>
+                    <g class="instance-spin-wrapper"><g class="instance-pulse-wrapper">
+                      <g class="instance-follow-wrapper">
+                        <use${alt ? ' class="alt"' : ""} href="${hrefForIndex(i)}"/>
+                      </g>
+                    </g></g>
                   </g>
                 </g>
               </g>
@@ -88,7 +101,11 @@ function layerMarkup(layer: Layer, animated: boolean): string {
   let body: string;
   if (useTuck) {
     // Two complementary half-disks (see seamHalves) — seamless, no double-blend.
-    const h = seamHalves(params, motif.box, animated ? animationReachPadding(layer) : 0);
+    const h = seamHalves(
+      params,
+      motif.box,
+      animated ? animationReachPadding(layer) + effectsReachPadding(layer) : 0
+    );
     const oppClip = `seam-opp-${id}`;
     const seamClip = `seam-half-${id}`;
     defs =
@@ -113,7 +130,7 @@ function layerMarkup(layer: Layer, animated: boolean): string {
   </defs>
   <g class="layer" data-layer-id="${id}">
     <g class="layer-center-root" transform="translate(${center.x},${center.y})">
-      <g class="repeat-root">
+      <g class="${animated && layer.effects?.compositeSpin.enabled ? `repeat-root composite-spin ${motionClassName(id)}-composite` : "repeat-root"}">
         <g class="repeat-scale" transform="scale(${layer.scale})">
 ${body}
         </g>
@@ -147,7 +164,7 @@ function buildSvgFromLayers(layers: Layer[], animated: boolean): string {
 
   // Back-to-front = array order.
   const body = visible.map((layer) => layerMarkup(layer, animated)).join("\n");
-  const style = animated ? centerPathStyles(visible, true) : "";
+  const style = animated ? [centerPathStyles(visible, true), effectsStyles(visible, true)].filter(Boolean).join("\n") : "";
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
 ${style ? `<style>${style}\n</style>\n` : ""}<g transform="translate(${-x},${-y})">

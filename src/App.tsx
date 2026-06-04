@@ -42,6 +42,7 @@ import {
   referenceInstancePoint,
   translateCenterPathAnimation,
 } from "./motion/centerPath";
+import { effectsStyles } from "./motion/effects";
 import {
   createLayer,
   createLayerGroup,
@@ -59,7 +60,7 @@ import {
   reorderByDisplay,
   updateLayer,
 } from "./document/layers";
-import type { Center, Layer, LayerGroup, Motif, PartTransform, RepeatParams } from "./types";
+import type { Center, Layer, LayerEffects, LayerGroup, Motif, PartTransform, RepeatParams } from "./types";
 import type { CenterPathAnimation } from "./types";
 
 type StateAction<T> = T | ((prev: T) => T);
@@ -100,7 +101,6 @@ const DEFAULT_PARAMS: RepeatParams = {
   sourceRotation: 0,
   sourceScale: 1,
   orientationMode: "rotateWithCircle",
-  mirrorAlternates: false,
   scaleStep: 0,
   opacityStep: 0,
   paintOffset: 0,
@@ -205,7 +205,11 @@ export default function App() {
   const canGroupSelection = selectedIds.length >= 2;
   const canUngroupSelection = groups.some((g) => g.layerIds.some((id) => selectedSet.has(id)));
   const motionCss = useMemo(
-    () => centerPathStyles(layers.filter((l) => l.visible), animationPlaying && !dragging),
+    () => {
+      const playing = animationPlaying && !dragging;
+      const visible = layers.filter((l) => l.visible);
+      return [centerPathStyles(visible, playing), effectsStyles(visible, playing)].filter(Boolean).join("\n");
+    },
     [layers, animationPlaying, dragging]
   );
   const primaryMotionPath = useMemo(() => {
@@ -234,6 +238,7 @@ export default function App() {
         scale: l.scale,
         motifBox: l.motif.box,
         animation: l.animation,
+        effects: l.effects,
       })),
     [editableSelected]
   );
@@ -249,6 +254,7 @@ export default function App() {
             scale: l.scale,
             motifBox: l.motif.box,
             animation: l.animation,
+            effects: l.effects,
           },
         ])
       ),
@@ -633,6 +639,23 @@ export default function App() {
           ? { ...l, animation: patch(l.animation), updatedAt: Date.now() }
           : l
       )
+    );
+  }
+
+  // Default (all-off) effect set; first toggle in the inspector materializes it.
+  function createEffects(): LayerEffects {
+    return {
+      individualSpin: { enabled: false, periodSeconds: 6, direction: "cw", stagger: false },
+      compositeSpin: { enabled: false, periodSeconds: 12, direction: "cw" },
+      scalePulse: { enabled: false, periodSeconds: 3, amount: 0.2, stagger: false },
+      radialPulse: { enabled: false, periodSeconds: 3, amount: 40, stagger: false },
+    };
+  }
+  // Apply a patch to every editable-selected layer's effects (seeding defaults).
+  function updateEffects(patch: (e: LayerEffects) => LayerEffects) {
+    const ids = editableIdsRef.current;
+    updateLayers((ls) =>
+      ls.map((l) => (ids.has(l.id) ? { ...l, effects: patch(l.effects ?? createEffects()), updatedAt: Date.now() } : l))
     );
   }
 
@@ -1282,6 +1305,7 @@ export default function App() {
           onTogglePlayback={() => setAnimationPlaying((p) => !p)}
           onDeleteAnimation={deletePrimaryAnimation}
           onUpdateAnimation={updatePrimaryAnimation}
+          onUpdateEffects={updateEffects}
         />
       </div>
 

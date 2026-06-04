@@ -6,8 +6,15 @@
 // (native input/change listeners) so a slider drag triggers ZERO React renders.
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../ui/icons";
-import type { CenterPathAnimation, Layer, OrientationMode, RepeatParams } from "../types";
+import type { CenterPathAnimation, Layer, LayerEffects, OrientationMode, RepeatParams } from "../types";
 import type { NumericParamKey } from "../canvas/useScene";
+
+const DEFAULT_EFFECTS: LayerEffects = {
+  individualSpin: { enabled: false, periodSeconds: 6, direction: "cw", stagger: false },
+  compositeSpin: { enabled: false, periodSeconds: 12, direction: "cw" },
+  scalePulse: { enabled: false, periodSeconds: 3, amount: 0.2, stagger: false },
+  radialPulse: { enabled: false, periodSeconds: 3, amount: 40, stagger: false },
+};
 
 interface ControlsProps {
   mode: "design" | "animate";
@@ -29,6 +36,7 @@ interface ControlsProps {
   onTogglePlayback: () => void;
   onDeleteAnimation: () => void;
   onUpdateAnimation: (patch: (animation: CenterPathAnimation) => CenterPathAnimation) => void;
+  onUpdateEffects: (patch: (e: LayerEffects) => LayerEffects) => void;
 }
 
 const pct = (v: number, min: number, max: number) => ((v - min) / (max - min)) * 100;
@@ -220,8 +228,6 @@ function RepeatGroups({ collapsibleSecondary, ...props }: ControlsProps & { coll
         <RadioGroup<OrientationMode> value={p.orientationMode}
           options={[["rotateWithCircle", "Rotate with circle"], ["keepUpright", "Keep upright"]]}
           onChange={(v) => onCommitAbsolute({ orientationMode: v })} />
-        <div style={{ height: 12 }} />
-        <Toggle label="Mirror alternates" checked={p.mirrorAlternates} onChange={(v) => onCommitAbsolute({ mirrorAlternates: v })} />
       </section>
 
       <section className="group">
@@ -257,84 +263,133 @@ function DesignInspector(props: ControlsProps) {
   );
 }
 
-function AnimateInspector(props: ControlsProps) {
-  const { primary, animationEditable, drawingMotionPath, animationPlaying, onBeginAnimateCenter, onTogglePlayback, onDeleteAnimation, onUpdateAnimation } = props;
-  const animation = primary!.animation?.type === "centerPath" ? primary!.animation : null;
+function EffectsSection({ effects, onUpdateEffects }: { effects: LayerEffects; onUpdateEffects: ControlsProps["onUpdateEffects"]; }) {
+  const dirOpts: [LayerEffects["individualSpin"]["direction"], string][] = [["cw", "Clockwise"], ["ccw", "Counter-cw"]];
+  return (
+    <section className="group">
+      <h2 className="group-title">Effects <span className="gt-line" /></h2>
 
-  if (!animation) {
-    return (
-      <div className="insp-scroll scroll">
-        <div className="empty-note" style={{ paddingTop: 30 }}>
-          <div style={{ color: "var(--teal)", marginBottom: 12 }}>{Icon.sparkle({ size: 26 })}</div>
-          <b style={{ color: "var(--text)", display: "block", marginBottom: 6 }}>No animation yet</b>
-          Add a motion path and this layer will animate around — or along — its center.
-        </div>
-        <div className="group">
-          <button className="play-btn" onClick={onBeginAnimateCenter} disabled={!animationEditable}>
-            {Icon.add({ size: 16 })} Add animation
-          </button>
-        </div>
-        <RepeatGroups {...props} collapsibleSecondary />
-      </div>
-    );
-  }
+      <Toggle label="Spin petals" checked={effects.individualSpin.enabled}
+        onChange={(v) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, enabled: v } }))} />
+      {effects.individualSpin.enabled && (
+        <>
+          <ValueSlider label="Spin period" value={effects.individualSpin.periodSeconds} min={0.5} max={30} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+            onChange={(v) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, periodSeconds: v } }))} />
+          <RadioGroup value={effects.individualSpin.direction} options={dirOpts}
+            onChange={(d) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, direction: d } }))} />
+          <Toggle label="Stagger around ring" checked={effects.individualSpin.stagger}
+            onChange={(v) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, stagger: v } }))} />
+        </>
+      )}
+
+      <div style={{ height: 10 }} />
+      <Toggle label="Spin whole ring" checked={effects.compositeSpin.enabled}
+        onChange={(v) => onUpdateEffects((e) => ({ ...e, compositeSpin: { ...e.compositeSpin, enabled: v } }))} />
+      {effects.compositeSpin.enabled && (
+        <>
+          <ValueSlider label="Ring period" value={effects.compositeSpin.periodSeconds} min={1} max={60} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+            onChange={(v) => onUpdateEffects((e) => ({ ...e, compositeSpin: { ...e.compositeSpin, periodSeconds: v } }))} />
+          <RadioGroup value={effects.compositeSpin.direction} options={dirOpts}
+            onChange={(d) => onUpdateEffects((e) => ({ ...e, compositeSpin: { ...e.compositeSpin, direction: d } }))} />
+        </>
+      )}
+
+      <div style={{ height: 10 }} />
+      <Toggle label="Scale pulse" checked={effects.scalePulse.enabled}
+        onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, enabled: v } }))} />
+      {effects.scalePulse.enabled && (
+        <>
+          <ValueSlider label="Pulse period" value={effects.scalePulse.periodSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+            onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, periodSeconds: v } }))} />
+          <ValueSlider label="Amount" value={effects.scalePulse.amount} min={0.05} max={1} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`}
+            onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, amount: v } }))} />
+          <Toggle label="Stagger around ring" checked={effects.scalePulse.stagger}
+            onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, stagger: v } }))} />
+        </>
+      )}
+
+      <div style={{ height: 10 }} />
+      <Toggle label="Radial pulse" checked={effects.radialPulse.enabled}
+        onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, enabled: v } }))} />
+      {effects.radialPulse.enabled && (
+        <>
+          <ValueSlider label="Pulse period" value={effects.radialPulse.periodSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+            onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, periodSeconds: v } }))} />
+          <ValueSlider label="Amount" value={effects.radialPulse.amount} min={5} max={300} step={5} fmt={(v) => `${Math.round(v)}px`}
+            onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, amount: v } }))} />
+          <Toggle label="Stagger around ring" checked={effects.radialPulse.stagger}
+            onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, stagger: v } }))} />
+        </>
+      )}
+    </section>
+  );
+}
+
+function AnimateInspector(props: ControlsProps) {
+  const { primary, animationEditable, drawingMotionPath, animationPlaying, onBeginAnimateCenter, onTogglePlayback, onDeleteAnimation, onUpdateAnimation, onUpdateEffects } = props;
+  const animation = primary!.animation?.type === "centerPath" ? primary!.animation : null;
+  const effects = primary!.effects ?? DEFAULT_EFFECTS;
 
   return (
     <div className="insp-scroll scroll">
       <section className="group">
-        <h2 className="group-title">Motion <span className="gt-line" /></h2>
-        <button className="play-btn" onClick={onTogglePlayback} style={{ marginBottom: 13 }}>
+        <button className="play-btn" onClick={onTogglePlayback} style={{ marginBottom: 13 }} disabled={!animationEditable}>
           {animationPlaying ? Icon.pause() : Icon.play()} {animationPlaying ? "Pause" : "Preview"}
         </button>
-        <div className="anim-actions" style={{ marginBottom: 15 }}>
-          <button className={`btn${drawingMotionPath ? " btn-accent" : ""}`} onClick={onBeginAnimateCenter}>
-            {Icon.pen({ size: 15 })} Edit path
-          </button>
-        </div>
-        <ValueSlider label="Duration" value={animation.durationSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
-          onChange={(v) => onUpdateAnimation((a) => ({ ...a, durationSeconds: v }))} />
-        <ValueSlider label="Delay" value={animation.delaySeconds} min={0} max={10} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
-          onChange={(v) => onUpdateAnimation((a) => ({ ...a, delaySeconds: v }))} />
-        <div className="ctl">
-          <div className="ctl-row"><label className="ctl-label">Easing</label></div>
-          <div className="field-select">
-            <select value={animation.easing} onChange={(e) => onUpdateAnimation((a) => ({ ...a, easing: e.target.value as CenterPathAnimation["easing"] }))}>
-              <option value="linear">Linear</option>
-              <option value="ease-in">Ease in</option>
-              <option value="ease-out">Ease out</option>
-              <option value="ease-in-out">Ease in-out</option>
-            </select>
-            {Icon.chevron({ className: "fs-chev" })}
-          </div>
-        </div>
       </section>
 
-      <section className="group">
-        <h2 className="group-title">Playback <span className="gt-line" /></h2>
-        <RadioGroup<CenterPathAnimation["direction"]> value={animation.direction}
-          options={[["out", "Out"], ["out-and-back", "Out and back"], ["loop", "Loop"]]}
-          onChange={(value) => onUpdateAnimation((a) => {
-            const closed = value === "loop" ? true : a.closed;
-            return { ...a, direction: value, closed, path: { ...a.path, closed } };
-          })} />
-        <div style={{ height: 12 }} />
-        <div className="group-title" style={{ marginBottom: 8 }}>Orientation <span className="gt-line" /></div>
-        <RadioGroup<CenterPathAnimation["orientationMode"]> value={animation.orientationMode}
-          options={[["fixed", "Fixed"], ["followPath", "Follow path"]]}
-          onChange={(value) => onUpdateAnimation((a) => ({ ...a, orientationMode: value }))} />
-        <div style={{ height: 12 }} />
-        <Toggle label="Closed path" checked={animation.closed}
-          onChange={(checked) => onUpdateAnimation((a) => ({
-            ...a, closed: checked, path: { ...a.path, closed },
-            direction: checked ? a.direction : a.direction === "loop" ? "out-and-back" : a.direction,
-          }))} />
-      </section>
+      {animation ? (
+        <>
+          <section className="group">
+            <h2 className="group-title">Motion path <span className="gt-line" /></h2>
+            <div className="anim-actions" style={{ marginBottom: 15 }}>
+              <button className={`btn${drawingMotionPath ? " btn-accent" : ""}`} onClick={onBeginAnimateCenter}>
+                {Icon.pen({ size: 15 })} Edit path
+              </button>
+            </div>
+            <ValueSlider label="Duration" value={animation.durationSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+              onChange={(v) => onUpdateAnimation((a) => ({ ...a, durationSeconds: v }))} />
+            <ValueSlider label="Delay" value={animation.delaySeconds} min={0} max={10} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+              onChange={(v) => onUpdateAnimation((a) => ({ ...a, delaySeconds: v }))} />
+            <div className="ctl">
+              <div className="ctl-row"><label className="ctl-label">Easing</label></div>
+              <div className="field-select">
+                <select value={animation.easing} onChange={(e) => onUpdateAnimation((a) => ({ ...a, easing: e.target.value as CenterPathAnimation["easing"] }))}>
+                  <option value="linear">Linear</option>
+                  <option value="ease-in">Ease in</option>
+                  <option value="ease-out">Ease out</option>
+                  <option value="ease-in-out">Ease in-out</option>
+                </select>
+                {Icon.chevron({ className: "fs-chev" })}
+              </div>
+            </div>
+            <div style={{ height: 12 }} />
+            <RadioGroup<CenterPathAnimation["direction"]> value={animation.direction}
+              options={[["out", "Out"], ["out-and-back", "Out and back"], ["loop", "Loop"]]}
+              onChange={(value) => onUpdateAnimation((a) => {
+                const closed = value === "loop" ? true : a.closed;
+                return { ...a, direction: value, closed, path: { ...a.path, closed } };
+              })} />
+            <div style={{ height: 12 }} />
+            <div className="group-title" style={{ marginBottom: 8 }}>Orientation <span className="gt-line" /></div>
+            <RadioGroup<CenterPathAnimation["orientationMode"]> value={animation.orientationMode}
+              options={[["fixed", "Fixed"], ["followPath", "Follow path"]]}
+              onChange={(value) => onUpdateAnimation((a) => ({ ...a, orientationMode: value }))} />
+            <div style={{ height: 12 }} />
+            <button className="danger-link" onClick={onDeleteAnimation}>Delete motion path</button>
+          </section>
+        </>
+      ) : (
+        <section className="group">
+          <button className="btn" onClick={onBeginAnimateCenter} disabled={!animationEditable}>
+            {Icon.add({ size: 16 })} Add motion path
+          </button>
+        </section>
+      )}
+
+      <EffectsSection effects={effects} onUpdateEffects={onUpdateEffects} />
 
       <RepeatGroups {...props} collapsibleSecondary />
-
-      <div className="group">
-        <button className="danger-link" onClick={onDeleteAnimation}>Delete animation</button>
-      </div>
     </div>
   );
 }

@@ -22,8 +22,9 @@ import {
   instanceMotionVectorForGeometry,
   referenceInstancePointForGeometry,
 } from "../motion/centerPath";
+import { effectsReachPaddingForGeometry } from "../motion/effects";
 import type { GBounds } from "./selectionBounds";
-import type { Box, Center, LayerAnimation, RepeatParams } from "../types";
+import type { Box, Center, LayerAnimation, LayerEffects, RepeatParams } from "../types";
 
 /** CSS.escape, with a fallback for environments that lack it (e.g. jsdom). Layer
  *  ids are already selector-safe, so the identity fallback is fine. */
@@ -38,6 +39,7 @@ export interface DragTargetSpec {
   scale: number;
   motifBox: Box;
   animation?: LayerAnimation;
+  effects?: LayerEffects;
 }
 
 export interface ResolvedTarget {
@@ -218,7 +220,8 @@ export function useScene(): Scene {
           const h = seamHalves(
             p,
             t.motifBox,
-            animationReachPaddingForGeometry(p, t.scale, t.animation, fallbackStart)
+            animationReachPaddingForGeometry(p, t.scale, t.animation, fallbackStart) +
+              effectsReachPaddingForGeometry(p, t.motifBox, t.effects)
           );
           clips.opp?.setAttribute("d", h.oppHalfD);
           clips.seam?.setAttribute("d", h.seamHalfD);

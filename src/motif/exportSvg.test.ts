@@ -25,7 +25,6 @@ const params: RepeatParams = {
   sourceRotation: 0,
   sourceScale: 1,
   orientationMode: "rotateWithCircle",
-  mirrorAlternates: false,
   scaleStep: 0,
   opacityStep: 0,
   paintOffset: 0,
@@ -137,6 +136,30 @@ describe("buildExportSvg (PRD §14)", () => {
     expect(svg).toContain("--motion-dy:50px");
     expect((svg.match(/class="instance-motion-wrapper motion-wrapper motion-a"/g) ?? []).length).toBe(4);
     expect(svg).not.toContain('clip-path="url(#seam-');
+  });
+
+  it("animated export includes looping effects (no center path needed)", () => {
+    const a = mk({
+      id: "a",
+      effects: {
+        individualSpin: { enabled: true, periodSeconds: 6, direction: "ccw", stagger: true },
+        compositeSpin: { enabled: true, periodSeconds: 12, direction: "cw" },
+        scalePulse: { enabled: false, periodSeconds: 3, amount: 0.2, stagger: false },
+        radialPulse: { enabled: false, periodSeconds: 3, amount: 40, stagger: false },
+      },
+    });
+    const svg = buildAnimatedExportSvg([a]);
+    expect(svg).toContain("instance-spin-wrapper");
+    expect(svg).toContain("@keyframes motion-a-spin");
+    expect(svg).toContain("--spin-delay");
+    expect(svg).toContain("animation-direction: reverse"); // ccw spin
+    // composite spin marks repeat-root and emits its keyframes
+    expect(svg).toContain("repeat-root composite-spin motion-a-composite");
+    expect(svg).toContain("@keyframes motion-a-composite-spin");
+    // static export carries none of it
+    const stat = buildExportSvg([a]);
+    expect(stat).not.toContain("@keyframes motion-a-spin");
+    expect(stat).not.toContain("--spin-delay");
   });
 
   it("animated export keeps tuck clips outside the moving wrappers", () => {

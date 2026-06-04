@@ -3,7 +3,7 @@
 // Rendering order: layers[0] = back/bottom, layers[N-1] = front/top.
 // The panel renders this reversed (top row = front). Keep this module pure and
 // unit-tested; it is the source of truth for ordering correctness.
-import type { Center, Layer, LayerAnimation, LayerGroup, Motif, RepeatParams } from "../types";
+import type { Center, Layer, LayerAnimation, LayerEffects, LayerGroup, Motif, RepeatParams } from "../types";
 
 let idCounter = 0;
 export function newLayerId(): string {
@@ -53,6 +53,16 @@ function cloneAnimation(animation: LayerAnimation | undefined): LayerAnimation |
   };
 }
 
+function cloneEffects(effects: LayerEffects | undefined): LayerEffects | undefined {
+  if (!effects) return undefined;
+  return {
+    individualSpin: { ...effects.individualSpin },
+    compositeSpin: { ...effects.compositeSpin },
+    scalePulse: { ...effects.scalePulse },
+    radialPulse: { ...effects.radialPulse },
+  };
+}
+
 /**
  * Deep-copy a layer for duplication: new id, "{name} copy", independent params
  * and center so edits to the copy never touch the original. Keeps visibility and
@@ -68,6 +78,7 @@ export function duplicateLayer(layer: Layer): Layer {
     center: { ...layer.center },
     components: Object.fromEntries(Object.entries(layer.components).map(([k, v]) => [k, { ...v }])),
     animation: cloneAnimation(layer.animation),
+    effects: cloneEffects(layer.effects),
     createdAt: now,
     updatedAt: now,
   };
