@@ -136,6 +136,17 @@ describe("App layer interactions", () => {
     expect(canvas().querySelector("style")?.textContent ?? "").toContain("animation-play-state: paused");
   });
 
+  it("adds an animation to every selected layer at once", () => {
+    newLayer(); // 2 layers
+    selectAll();
+    setMode("animate");
+    click(button("Add animation"));
+    // both layers now report animation in the panel meta
+    expect((container.textContent?.match(/· anim/g) ?? []).length).toBe(2);
+    // and both have animated repeat wrappers on the canvas
+    expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper").length).toBe(48); // 2 layers × 12 × 2 passes
+  });
+
   it("keeps the tucked still-frame ordering when entering animation edit mode", () => {
     setMode("animate");
     click(button("Add animation"));

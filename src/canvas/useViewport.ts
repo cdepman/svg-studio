@@ -12,7 +12,8 @@ const MAX_S = 12;
 export interface ViewportApi {
   viewport: Viewport;
   setViewport: React.Dispatch<React.SetStateAction<Viewport>>;
-  onWheel: (e: React.WheelEvent<SVGSVGElement>) => void;
+  /** Zoom anchored at an svg-local point (the point under the cursor stays put). */
+  zoomAt: (lx: number, ly: number, deltaY: number) => void;
   /** Pan by a screen-pixel delta (already in svg-local px). */
   panBy: (dx: number, dy: number) => void;
 }
@@ -20,15 +21,9 @@ export interface ViewportApi {
 export function useViewport(initial: Viewport): ViewportApi {
   const [viewport, setViewport] = useState<Viewport>(initial);
 
-  const onWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
-    e.preventDefault();
-    const svg = e.currentTarget;
-    const rect = svg.getBoundingClientRect();
-    const lx = e.clientX - rect.left; // svg-local px (1:1 with user units)
-    const ly = e.clientY - rect.top;
-
+  const zoomAt = useCallback((lx: number, ly: number, deltaY: number) => {
     setViewport((v) => {
-      const factor = Math.exp(-e.deltaY * 0.0015);
+      const factor = Math.exp(-deltaY * 0.0015);
       const newS = clamp(v.s * factor, MIN_S, MAX_S);
       if (newS === v.s) return v;
       // Keep the world point under the cursor fixed: world = (local - t)/s.
@@ -46,5 +41,5 @@ export function useViewport(initial: Viewport): ViewportApi {
     setViewport((v) => ({ ...v, tx: v.tx + dx, ty: v.ty + dy }));
   }, []);
 
-  return { viewport, setViewport, onWheel, panBy };
+  return { viewport, setViewport, zoomAt, panBy };
 }

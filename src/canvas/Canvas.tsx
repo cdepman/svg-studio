@@ -48,7 +48,8 @@ interface CanvasProps {
   onUngroupSelection: () => void;
   canGroupSelection: boolean;
   canUngroupSelection: boolean;
-  onWheel: (e: React.WheelEvent<SVGSVGElement>) => void;
+  /** Zoom the canvas at an svg-local point. */
+  onZoom: (lx: number, ly: number, deltaY: number) => void;
   panBy: (dx: number, dy: number) => void;
 }
 
@@ -75,7 +76,7 @@ export function Canvas({
   onUngroupSelection,
   canGroupSelection,
   canUngroupSelection,
-  onWheel,
+  onZoom,
   panBy,
 }: CanvasProps) {
   const { s, tx, ty } = viewport;
@@ -126,6 +127,21 @@ export function Canvas({
       window.removeEventListener("keyup", up);
     };
   }, []);
+
+  // Native, NON-passive wheel listener: React's onWheel is passive, so
+  // preventDefault there is ignored and the browser page-zooms on a trackpad
+  // pinch (ctrl+wheel). Here we can preventDefault and zoom only the canvas.
+  useEffect(() => {
+    const svg = scene.svgRef.current;
+    if (!svg) return;
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = svg.getBoundingClientRect();
+      onZoom(e.clientX - r.left, e.clientY - r.top, e.deltaY);
+    };
+    svg.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheelNative);
+  }, [onZoom, scene]);
 
   const paintMotionHandle = (handle: "start" | "end", point: Center) => {
     const axis = handle === "start" ? "1" : "2";
@@ -329,7 +345,6 @@ export function Canvas({
     <svg
       ref={scene.svgRef}
       className="canvas-svg"
-      onWheel={onWheel}
       onPointerDown={onSvgPointerDown}
       onPointerMove={onSvgPointerMove}
       onPointerUp={onSvgPointerUp}

@@ -57,7 +57,7 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       onUngroupSelection={() => {}}
       canGroupSelection={selected.size >= 2}
       canUngroupSelection={false}
-      onWheel={() => {}}
+      onZoom={() => {}}
       panBy={() => {}}
     />
   );

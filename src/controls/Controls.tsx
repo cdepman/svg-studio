@@ -199,13 +199,20 @@ function RepeatGroups({ collapsibleSecondary, ...props }: ControlsProps & { coll
 
   const secondary = SECONDARY.map((def) => <DeltaSlider key={def.k} def={def} {...sliderProps} />);
 
+  // Radius offset is an absolute world distance, so its useful range scales with
+  // the motif's own size — a fixed cap "pops out too quickly" for big imported
+  // SVGs and overshoots for tiny ones. Range it off the motif's half-diagonal.
+  const motifReach = 0.5 * Math.hypot(primary!.motif.box.width, primary!.motif.box.height);
+  const radiusMax = Math.max(480, Math.round(motifReach * 12));
+  const core = CORE.map((def) => (def.k === "radiusOffset" ? { ...def, max: radiusMax } : def));
+
   return (
     <fieldset className="repeat-groups" disabled={!editable} key={bodyKey} style={{ border: "none", margin: 0, padding: 0, minWidth: 0 }}>
       <section className="group">
         <h2 className="group-title">Repeat <span className="gt-line" /></h2>
         <ValueSlider label="Count" value={p.count} min={1} max={128} step={1} dim={multi} disabled={multi}
           onChange={(v) => onCommitAbsolute({ count: Math.round(v) })} />
-        {CORE.map((def) => <DeltaSlider key={def.k} def={def} {...sliderProps} />)}
+        {core.map((def) => <DeltaSlider key={def.k} def={def} {...sliderProps} />)}
       </section>
 
       <section className="group">

@@ -148,7 +148,7 @@ export default function App() {
   const currentDrawingRef = useRef<string | null>(null);
 
   const scene = useScene();
-  const { viewport, setViewport, onWheel, panBy } = useViewport({ tx: 0, ty: 0, s: 1 });
+  const { viewport, setViewport, zoomAt, panBy } = useViewport({ tx: 0, ty: 0, s: 1 });
 
   // --- Derived selection ---
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -168,7 +168,9 @@ export default function App() {
   }, [layers, primaryId, editableSelected]);
 
   const gizmo = useMemo(() => unionBounds(editableSelected), [editableSelected]);
-  const animationEditable = !!primary && selectedIds.length === 1 && primary.visible && !primary.locked;
+  // Animation can be added/edited whenever ≥1 editable layer is selected; it
+  // applies to the whole selection in synchrony (like the repeat params).
+  const animationEditable = editableSelected.length > 0;
   const canGroupSelection = selectedIds.length >= 2;
   const canUngroupSelection = groups.some((g) => g.layerIds.some((id) => selectedSet.has(id)));
   const motionCss = useMemo(
@@ -307,11 +309,41 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Stop the browser from page-zooming on a trackpad pinch (ctrl+wheel) or
+  // Safari gesture events, app-wide. Non-ctrl wheel (e.g. inspector scroll) is
+  // left alone; the canvas's own wheel listener handles canvas zoom.
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => { if (e.ctrlKey) e.preventDefault(); };
+    const onGesture = (e: Event) => e.preventDefault();
+    document.addEventListener("wheel", onWheel, { passive: false });
+    document.addEventListener("gesturestart", onGesture);
+    document.addEventListener("gesturechange", onGesture);
+    document.addEventListener("gestureend", onGesture);
+    return () => {
+      document.removeEventListener("wheel", onWheel);
+      document.removeEventListener("gesturestart", onGesture);
+      document.removeEventListener("gesturechange", onGesture);
+      document.removeEventListener("gestureend", onGesture);
+    };
+  }, []);
+
   function viewportCenterWorld(): Center {
     const svg = scene.svgRef.current;
     if (!svg) return { x: 0, y: 0 };
     const r = svg.getBoundingClientRect();
     return scene.screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
+  }
+
+  // Frame a layer: center it and pick a zoom so it fills ~80% of the canvas.
+  // (Imported SVGs live in their own large unit space; without this they show
+  //  blown-up at 100%.)
+  function fitLayerToView(layer: Layer) {
+    const svg = scene.svgRef.current;
+    if (!svg) return;
+    const r = svg.getBoundingClientRect();
+    const span = Math.max(2 * layerReach(layer.params, layer.motif.box, layer.scale), 1);
+    const s = Math.max(0.05, Math.min(4, (0.8 * Math.min(r.width, r.height)) / span));
+    setViewport({ s, tx: r.width / 2 - layer.center.x * s, ty: r.height / 2 - layer.center.y * s });
   }
 
   function moveLayerWithAnimation(layer: Layer, delta: Center): Layer {
@@ -472,23 +504,26 @@ export default function App() {
     moveBegin(e, moveIds);
   };
 
+  // Apply a patch to every editable-selected layer that has an animation.
   function updatePrimaryAnimation(patch: (animation: CenterPathAnimation) => CenterPathAnimation) {
-    if (!primaryId) return;
+    const ids = editableIdsRef.current;
     updateLayers((ls) =>
-      ls.map((l) => {
-        if (l.id !== primaryId) return l;
-        const current =
-          l.animation?.type === "centerPath" ? l.animation : createCenterPathAnimation(l);
-        return { ...l, animation: patch(current), updatedAt: Date.now() };
-      })
+      ls.map((l) =>
+        ids.has(l.id) && l.animation?.type === "centerPath"
+          ? { ...l, animation: patch(l.animation), updatedAt: Date.now() }
+          : l
+      )
     );
   }
 
+  // Add a center-path animation to every editable-selected layer (each around
+  // its own center), then edit the path.
   function beginAnimateCenter() {
-    if (!primary || !animationEditable) return;
+    const ids = editableIdsRef.current;
+    if (ids.size === 0) return;
     updateLayers((ls) =>
       ls.map((l) =>
-        l.id === primary.id && !l.animation
+        ids.has(l.id) && !l.animation
           ? { ...l, animation: createCenterPathAnimation(l), updatedAt: Date.now() }
           : l
       )
@@ -497,22 +532,26 @@ export default function App() {
   }
 
   function commitMotionPathPoint(handle: "start" | "end", point: Center) {
-    if (!primaryId) return;
+    if (!primary) return;
+    const ids = editableIdsRef.current;
+    // The dragged handle's offset relative to the PRIMARY's reference point is
+    // applied to every selected layer relative to ITS reference — so a multi-
+    // selection animates with the same path shape. (Single-select is identical.)
+    const primaryRef = referenceInstancePoint(primary);
+    const rel = { x: point.x - primaryRef.x, y: point.y - primaryRef.y };
     updateLayers((ls) =>
       ls.map((l) => {
-        if (l.id !== primaryId) return l;
-        const current = l.animation?.type === "centerPath" ? l.animation : createCenterPathAnimation(l, point);
+        if (!ids.has(l.id)) return l;
+        const ref = referenceInstancePoint(l);
+        const moved = { x: ref.x + rel.x, y: ref.y + rel.y };
+        const current = l.animation?.type === "centerPath" ? l.animation : createCenterPathAnimation(l, moved);
         const closed = current.direction === "loop" ? true : current.closed;
-        const { start, end } = animationPoints(current, referenceInstancePoint(l));
-        const nextStart = handle === "start" ? point : start;
-        const nextEnd = handle === "end" ? point : end;
+        const { start, end } = animationPoints(current, ref);
+        const nextStart = handle === "start" ? moved : start;
+        const nextEnd = handle === "end" ? moved : end;
         return {
           ...l,
-          animation: {
-            ...current,
-            closed,
-            path: { ...current.path, points: [nextStart, nextEnd], closed },
-          },
+          animation: { ...current, closed, path: { ...current.path, points: [nextStart, nextEnd], closed } },
           updatedAt: Date.now(),
         };
       })
@@ -521,11 +560,9 @@ export default function App() {
   }
 
   function deletePrimaryAnimation() {
-    if (!primaryId) return;
+    const ids = editableIdsRef.current;
     updateLayers((ls) =>
-      ls.map((l) =>
-        l.id === primaryId ? { ...l, animation: undefined, updatedAt: Date.now() } : l
-      )
+      ls.map((l) => (ids.has(l.id) ? { ...l, animation: undefined, updatedAt: Date.now() } : l))
     );
     setDrawingMotionPath(false);
   }
@@ -716,7 +753,10 @@ export default function App() {
     try {
       const m = await importSvgFromFile(file);
       newLayerCount.current += 1;
-      addLayerFromMotif(m, `Radial Repeat ${newLayerCount.current}`);
+      // Import as a single object (count 1, no repeat). The user raises the
+      // count / uses Radialize when they want a ring.
+      const layer = addLayerFromMotif(m, `Imported ${newLayerCount.current}`, DRAWN_PARAMS);
+      fitLayerToView(layer);
       setNotice(m.simplified ? "This SVG was simplified on import." : null);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Could not import that file.");
@@ -883,7 +923,7 @@ export default function App() {
 
         <div className="tb-center">
           <div className="mode-switch">
-            <button className={`mode-btn${mode === "design" ? " is-active" : ""}`} data-m="design" onClick={() => setMode("design")}>
+            <button className={`mode-btn${mode === "design" ? " is-active" : ""}`} data-m="design" onClick={() => { setAnimationPlaying(false); setMode("design"); }}>
               <span className="dot" /> Design
             </button>
             <button className={`mode-btn${mode === "animate" ? " is-active" : ""}`} data-m="animate" onClick={() => setMode("animate")}>
@@ -990,9 +1030,9 @@ export default function App() {
             selectedIds={selectedSet}
             gizmo={gizmo}
             motionCss={motionCss}
-            motionPath={primaryMotionPath}
-            drawingMotionPath={drawingMotionPath}
-            animationsMoving={animationPlaying && !dragging && tool !== "pencil"}
+            motionPath={mode === "animate" ? primaryMotionPath : null}
+            drawingMotionPath={mode === "animate" && drawingMotionPath}
+            animationsMoving={animationPlaying && mode === "animate" && !dragging && tool !== "pencil"}
             tool={tool}
             pencil={pencil}
             onDrawCommit={onDrawCommit}
@@ -1008,7 +1048,7 @@ export default function App() {
             onUngroupSelection={ungroupSelectedLayers}
             canGroupSelection={canGroupSelection}
             canUngroupSelection={canUngroupSelection}
-            onWheel={onWheel}
+            onZoom={zoomAt}
             panBy={panBy}
           />
 
