@@ -10,6 +10,7 @@ import { LayerArt } from "./LayerArt";
 import { pencilPreviewPath, type PencilSettings } from "../motif/drawnPath";
 import { PartEditLayer } from "./PartEditLayer";
 import { ComponentEditLayer } from "./ComponentEditLayer";
+import { smoothPathD } from "../motion/centerPath";
 import type { Scene } from "./useScene";
 import type { GBounds } from "./selectionBounds";
 import type { WorldRect } from "../App";
@@ -42,8 +43,11 @@ interface CanvasProps {
   onCommitPartTransform: (layerId: string, partId: string, t: PartTransform) => void;
   onExitPart: () => void;
   motionCss: string;
-  motionPath: { start: Center; end: Center; closed: boolean } | null;
+  /** The primary layer's motion path (world points), shown while in Animate mode. */
+  motionPath: { points: Center[]; closed: boolean } | null;
   drawingMotionPath: boolean;
+  /** Where the drawn path is anchored (the primary petal's center), or null. */
+  motionAnchor: Center | null;
   animationsMoving: boolean;
   /** Active tool. "pencil" replaces select/marquee on the canvas with drawing. */
   tool: "select" | "pencil";
@@ -58,7 +62,8 @@ interface CanvasProps {
   /** Grab a layer's artwork: select-if-needed and begin a move. */
   onLayerPointerDown: (e: React.PointerEvent, id: string, additive: boolean) => void;
   onMarqueeSelect: (rect: WorldRect, additive: boolean) => void;
-  onMotionPathCommit: (handle: "start" | "end", point: Center) => void;
+  /** Commit a freehand-drawn motion path (raw world points). */
+  onMotionPathDrawn: (points: Center[]) => void;
   onResizePointerDown: (e: React.PointerEvent) => void;
   onRotatePointerDown: (e: React.PointerEvent) => void;
   /** Zoom the canvas at an svg-local point. */
@@ -83,6 +88,7 @@ export function Canvas({
   motionCss,
   motionPath,
   drawingMotionPath,
+  motionAnchor,
   animationsMoving,
   tool,
   pencil,
@@ -94,7 +100,7 @@ export function Canvas({
   scene,
   onLayerPointerDown,
   onMarqueeSelect,
-  onMotionPathCommit,
+  onMotionPathDrawn,
   onResizePointerDown,
   onRotatePointerDown,
   onZoom,
@@ -108,9 +114,7 @@ export function Canvas({
   // Manual double-tap detection (native dblclick is unreliable under the
   // pointer-capture used by the move gesture).
   const lastTap = useRef<{ id: string; t: number; x: number; y: number } | null>(null);
-  const motionLineRef = useRef<SVGLineElement>(null);
-  const motionStartRef = useRef<SVGCircleElement>(null);
-  const motionEndRef = useRef<SVGCircleElement>(null);
+  const motionPathRef = useRef<SVGPathElement>(null);
   // Marquee selection. Mode is tracked on a ref (per-frame), rect in state so
   // the dashed box renders; LayerArt is memoized so this re-render is cheap.
   const mode = useRef<"pan" | "marquee" | "motion-path" | "draw" | null>(null);
@@ -122,11 +126,9 @@ export function Canvas({
   const drawQueued = useRef(false);
   const pencilPreviewRef = useRef<SVGPathElement>(null);
   const pencilAnchorRef = useRef<SVGCircleElement>(null);
-  const motionDrag = useRef({
-    handle: "end" as "start" | "end",
-    pending: null as PointerEvent | null,
-    queued: false,
-  });
+  // Freehand motion-path drawing: collect world points, preview imperatively.
+  const motionPts = useRef<Center[]>([]);
+  const motionDraw = useRef({ pending: null as PointerEvent | null, queued: false });
   const [marquee, setMarquee] = useState<WorldRect | null>(null);
 
   const normRect = (a: Center, b: Center): WorldRect => ({
@@ -166,50 +168,58 @@ export function Canvas({
     return () => svg.removeEventListener("wheel", onWheelNative);
   }, [onZoom, scene]);
 
-  const paintMotionHandle = (handle: "start" | "end", point: Center) => {
-    const axis = handle === "start" ? "1" : "2";
-    motionLineRef.current?.setAttribute(`x${axis}`, String(point.x));
-    motionLineRef.current?.setAttribute(`y${axis}`, String(point.y));
-    const circle = handle === "start" ? motionStartRef.current : motionEndRef.current;
-    circle?.setAttribute("cx", String(point.x));
-    circle?.setAttribute("cy", String(point.y));
+  // Preview points: the drawn stroke translated so its first point sits on the
+  // anchor (the primary petal's center) — the path always starts from the petal.
+  const motionFirst = useRef<Center>({ x: 0, y: 0 });
+  const anchoredPreview = (pts: Center[]): Center[] => {
+    const a = motionAnchor;
+    if (!a) return pts;
+    const f = motionFirst.current;
+    return pts.map((p) => ({ x: a.x + (p.x - f.x), y: a.y + (p.y - f.y) }));
   };
 
-  const applyMotionDrag = () => {
-    motionDrag.current.queued = false;
-    const e = motionDrag.current.pending;
+  const applyMotionDraw = () => {
+    motionDraw.current.queued = false;
+    const e = motionDraw.current.pending;
     if (!e) return;
-    paintMotionHandle(motionDrag.current.handle, scene.screenToWorld(e.clientX, e.clientY));
+    const p = scene.screenToWorld(e.clientX, e.clientY);
+    const pts = motionPts.current;
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= 2 * inv) pts.push(p);
+    motionPathRef.current?.setAttribute("d", smoothPathD(anchoredPreview(pts), false));
   };
 
-  const motionMove = (e: PointerEvent) => {
-    motionDrag.current.pending = e;
-    if (!motionDrag.current.queued) {
-      motionDrag.current.queued = true;
-      requestAnimationFrame(applyMotionDrag);
+  const motionDrawMove = (e: PointerEvent) => {
+    motionDraw.current.pending = e;
+    if (!motionDraw.current.queued) {
+      motionDraw.current.queued = true;
+      requestAnimationFrame(applyMotionDraw);
     }
   };
 
-  const motionUp = (e: PointerEvent) => {
-    window.removeEventListener("pointermove", motionMove);
-    window.removeEventListener("pointerup", motionUp);
-    const point = scene.screenToWorld(e.clientX, e.clientY);
-    const handle = motionDrag.current.handle;
-    paintMotionHandle(handle, point);
+  const motionDrawUp = (e: PointerEvent) => {
+    window.removeEventListener("pointermove", motionDrawMove);
+    window.removeEventListener("pointerup", motionDrawUp);
+    const end = scene.screenToWorld(e.clientX, e.clientY);
+    const pts = motionPts.current;
+    if (pts.length === 0 || Math.hypot(end.x - pts[pts.length - 1].x, end.y - pts[pts.length - 1].y) > 0.5) pts.push(end);
     mode.current = null;
-    onMotionPathCommit(handle, point);
+    motionPts.current = [];
+    if (pts.length >= 2) onMotionPathDrawn(pts);
   };
 
-  const beginMotionDrag = (e: React.PointerEvent, handle: "start" | "end" = "end") => {
+  // Draw a freehand motion path: each copy will trace it relative to the center.
+  const beginMotionDraw = (e: React.PointerEvent) => {
     e.preventDefault();
-    e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     mode.current = "motion-path";
-    motionDrag.current.handle = handle;
-    const point = scene.screenToWorld(e.clientX, e.clientY);
-    paintMotionHandle(handle, point);
-    window.addEventListener("pointermove", motionMove);
-    window.addEventListener("pointerup", motionUp);
+    const start = scene.screenToWorld(e.clientX, e.clientY);
+    motionPts.current = [start];
+    motionFirst.current = start;
+    const a = motionAnchor ?? start;
+    motionPathRef.current?.setAttribute("d", `M ${a.x} ${a.y}`);
+    window.addEventListener("pointermove", motionDrawMove);
+    window.addEventListener("pointerup", motionDrawUp);
   };
 
   // --- Pencil drawing (PRD §8–10) ---
@@ -295,8 +305,8 @@ export function Canvas({
       return;
     }
 
-    if (drawingMotionPath && motionPath) {
-      beginMotionDrag(e);
+    if (drawingMotionPath) {
+      beginMotionDraw(e);
       return;
     }
 
@@ -395,7 +405,7 @@ export function Canvas({
   return (
     <svg
       ref={scene.svgRef}
-      className="canvas-svg"
+      className={`canvas-svg${drawingMotionPath ? " drawing-path" : ""}`}
       onPointerDown={onSvgPointerDown}
       onPointerMove={onSvgPointerMove}
       onPointerUp={onSvgPointerUp}
@@ -457,32 +467,24 @@ export function Canvas({
                 height={2 * b.hh}
               />
             ))}
-          {motionPath && (
+          {(motionPath || drawingMotionPath) && (
             <g className="motion-path-ui">
-              <line
-                ref={motionLineRef}
-                className={motionPath.closed ? "motion-path-line closed" : "motion-path-line"}
-                x1={motionPath.start.x}
-                y1={motionPath.start.y}
-                x2={motionPath.end.x}
-                y2={motionPath.end.y}
+              <path
+                ref={motionPathRef}
+                className={motionPath?.closed ? "motion-path-line closed" : "motion-path-line"}
+                d={motionPath ? smoothPathD(motionPath.points, motionPath.closed) : ""}
+                style={{ strokeWidth: 2 * inv }}
               />
-              <circle
-                ref={motionStartRef}
-                className="motion-path-start"
-                cx={motionPath.start.x}
-                cy={motionPath.start.y}
-                r={7 * inv}
-                onPointerDown={(e) => beginMotionDrag(e, "start")}
-              />
-              <circle
-                ref={motionEndRef}
-                className="motion-path-end"
-                cx={motionPath.end.x}
-                cy={motionPath.end.y}
-                r={9 * inv}
-                onPointerDown={(e) => beginMotionDrag(e, "end")}
-              />
+              {motionPath && motionPath.points[0] && (
+                <circle className="motion-path-start" cx={motionPath.points[0].x} cy={motionPath.points[0].y} r={6 * inv} />
+              )}
+              {/* While drawing: a pulsing "start here" marker on the primary petal. */}
+              {drawingMotionPath && motionAnchor && (
+                <>
+                  <circle className="motion-anchor-halo" cx={motionAnchor.x} cy={motionAnchor.y} r={16 * inv} />
+                  <circle className="motion-anchor" cx={motionAnchor.x} cy={motionAnchor.y} r={5 * inv} />
+                </>
+              )}
             </g>
           )}
           {/* Selection gizmo: union frame + corner resize handles + a compact

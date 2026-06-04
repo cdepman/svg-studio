@@ -10,10 +10,12 @@ interface TimelineProps {
   playTime: number;
   playing: boolean;
   loop: boolean;
+  collapsed: boolean;
   selectedId: string | null;
   onTogglePlay: () => void;
   onToStart: () => void;
   onToggleLoop: () => void;
+  onToggleCollapse: () => void;
   onScrub: (t: number) => void;
   onSelect: (id: string) => void;
 }
@@ -21,8 +23,8 @@ interface TimelineProps {
 const fmt = (s: number) => (Math.round(s * 10) / 10).toFixed(1) + "s";
 
 export function Timeline({
-  layers, total, playTime, playing, loop, selectedId,
-  onTogglePlay, onToStart, onToggleLoop, onScrub, onSelect,
+  layers, total, playTime, playing, loop, collapsed, selectedId,
+  onTogglePlay, onToStart, onToggleLoop, onToggleCollapse, onScrub, onSelect,
 }: TimelineProps) {
   const lanesRef = useRef<HTMLDivElement>(null);
   const T = Math.max(total, 1);
@@ -45,8 +47,11 @@ export function Timeline({
   for (let t = 0; t <= T + 0.001; t += step) ticks.push(Math.round(t));
 
   return (
-    <div className="timeline">
+    <div className={`timeline${collapsed ? " is-collapsed" : ""}`}>
       <div className="tl-bar">
+        <button className={`tl-collapse${collapsed ? " is-collapsed" : ""}`} onClick={onToggleCollapse} title={collapsed ? "Expand timeline" : "Collapse timeline"}>
+          {Icon.chevron()}
+        </button>
         <div className="tl-transport">
           <button onClick={onToStart} title="Back to start">{Icon.toStart()}</button>
           <button className="tl-play" onClick={onTogglePlay} title="Play / pause">{playing ? Icon.pause() : Icon.play()}</button>
@@ -56,6 +61,7 @@ export function Timeline({
         <button className={`tl-loopbtn${loop ? " on" : ""}`} onClick={onToggleLoop}>{Icon.loop()} Loop</button>
       </div>
 
+      {!collapsed && (
       <div className="tl-body">
         <div className="tl-tracks-head scroll">
           <div className="tl-ruler-cell">tracks</div>
@@ -94,6 +100,7 @@ export function Timeline({
           <div className="tl-playhead" style={{ left: `${(playTime / T) * 100}%` }} />
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -17,12 +17,8 @@ import {
   seamHalves,
 } from "./repeatMath";
 import { GIZMO_DUP_GAP, GIZMO_HANDLE } from "../config";
-import {
-  animationReachPaddingForGeometry,
-  instanceMotionVectorForGeometry,
-  referenceInstancePointForGeometry,
-} from "../motion/centerPath";
-import { effectsReachPaddingForGeometry } from "../motion/effects";
+import { animationReachPaddingForGeometry } from "../motion/centerPath";
+import { anyEffectEnabled, effectsReachPaddingForGeometry } from "../motion/effects";
 import type { GBounds } from "./selectionBounds";
 import type { Box, Center, LayerAnimation, LayerEffects, RepeatParams } from "../types";
 
@@ -182,45 +178,27 @@ export function useScene(): Scene {
       for (const t of dragTargetsRef.current) {
         const p: RepeatParams = { ...t.params };
         for (const k in deltas) p[k as NumericParamKey] = t.params[k as NumericParamKey] + deltas[k as NumericParamKey]!;
+        const animated = !!t.animation?.enabled || anyEffectEnabled(t.effects);
         const root = repeatRootOf(t.id);
         if (root) {
           root.querySelectorAll<SVGGElement>(".instance-placement").forEach((g) => {
             const i = Number(g.dataset.i);
-            g.setAttribute("transform", t.animation?.enabled ? instanceSpokeTransform(p, i) : instanceTransform(p, i));
+            g.setAttribute("transform", animated ? instanceSpokeTransform(p, i) : instanceTransform(p, i));
             g.setAttribute("opacity", String(instanceOpacity(p, i)));
-            if (t.animation?.enabled) {
+            if (animated) {
               g.querySelector<SVGGElement>(".instance-local-transform")?.setAttribute(
                 "transform",
                 instanceLocalTransform(p, i)
               );
             }
           });
-          if (t.animation?.enabled) {
-            const fallbackStart = referenceInstancePointForGeometry(p, t.center, t.scale);
-            root.querySelectorAll<SVGGElement>(".instance-motion-wrapper").forEach((g) => {
-              const placement = g.querySelector<SVGGElement>(".instance-placement");
-              const i = Number(placement?.dataset.i);
-              const v = Number.isFinite(i)
-                ? instanceMotionVectorForGeometry(p, t.scale, t.animation, fallbackStart, i)
-                : null;
-              if (!v) return;
-              g.style.setProperty("--motion-start-dx", `${v.startDx}px`);
-              g.style.setProperty("--motion-start-dy", `${v.startDy}px`);
-              g.style.setProperty("--motion-end-dx", `${v.endDx}px`);
-              g.style.setProperty("--motion-end-dy", `${v.endDy}px`);
-              g.style.setProperty("--motion-dx", `${v.dx}px`);
-              g.style.setProperty("--motion-dy", `${v.dy}px`);
-              g.style.setProperty("--motion-angle", `${v.angle}deg`);
-            });
-          }
         }
         const clips = seamClipsOf(t.id);
         if (clips.opp || clips.seam) {
-          const fallbackStart = referenceInstancePointForGeometry(p, t.center, t.scale);
           const h = seamHalves(
             p,
             t.motifBox,
-            animationReachPaddingForGeometry(p, t.scale, t.animation, fallbackStart) +
+            animationReachPaddingForGeometry(p, t.scale, t.animation) +
               effectsReachPaddingForGeometry(p, t.motifBox, t.effects)
           );
           clips.opp?.setAttribute("d", h.oppHalfD);

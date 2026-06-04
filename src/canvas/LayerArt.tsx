@@ -17,7 +17,7 @@ import {
   subsetIndices,
 } from "./repeatMath";
 import { PROXY_CAP } from "../config";
-import { animationReachPadding, instanceMotionStyle, motionClassName } from "../motion/centerPath";
+import { animationReachPadding, motionClassName } from "../motion/centerPath";
 import { effectsReachPadding, instanceEffectStyle, isLayerAnimated } from "../motion/effects";
 import { recolorMarkup } from "../motif/recolor";
 import { partTransformAttr } from "../motif/parts";
@@ -75,10 +75,7 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
       >
         {/* radial-pulse wrapper: translateX runs along the spoke (outward). */}
         <g className="instance-radial-wrapper" style={instanceEffectStyle(layer, i)}>
-          <g
-            className={`instance-motion-wrapper motion-wrapper ${motionClassName(layer.id)}`}
-            style={instanceMotionStyle(layer, i)}
-          >
+          <g className={`instance-motion-wrapper motion-wrapper ${motionClassName(layer.id)}`}>
             <g className="instance-local-transform" transform={animated ? instanceLocalTransform(p, i) : undefined}>
               {/* spin + pulse wrappers rotate/scale the copy about its own center. */}
               <g className="instance-spin-wrapper">

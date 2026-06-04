@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import type { Center, CenterPathAnimation, Layer, LayerAnimation, RepeatParams } from "../types";
 
 export const DEFAULT_CENTER_PATH_OFFSET = 160;
@@ -9,6 +8,8 @@ function rotate(v: Center, degrees: number): Center {
   const s = Math.sin(r);
   return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
 }
+
+const num = (n: number) => (Object.is(Math.round(n * 1e4) / 1e4, -0) ? "0" : String(Math.round(n * 1e4) / 1e4));
 
 export function referenceInstancePointForGeometry(
   params: RepeatParams,
@@ -46,7 +47,7 @@ export function createCenterPathAnimation(layer: Layer, end?: Center): CenterPat
 
 export function animationPoints(animation: CenterPathAnimation, fallbackStart: Center) {
   const start = animation.path.points[0] ?? fallbackStart;
-  const end = animation.path.points[1] ?? start;
+  const end = animation.path.points[animation.path.points.length - 1] ?? start;
   return { start, end };
 }
 
@@ -68,93 +69,6 @@ export function motionClassName(layerId: string) {
   return `motion-${layerId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
-export function instanceMotionVectorForGeometry(
-  params: RepeatParams,
-  scale: number,
-  raw: LayerAnimation | undefined,
-  referencePoint: Center,
-  _index: number
-) {
-  if (!raw || raw.type !== "centerPath") return null;
-  const animation = normalizedAnimation(raw);
-  const { start, end } = animationPoints(animation, referencePoint);
-  const refStart = { x: start.x - referencePoint.x, y: start.y - referencePoint.y };
-  const refEnd = { x: end.x - referencePoint.x, y: end.y - referencePoint.y };
-  const refDelta = { x: end.x - start.x, y: end.y - start.y };
-  const localStart = rotate(refStart, -params.angleOffset);
-  const localEnd = rotate(refEnd, -params.angleOffset);
-  const localDelta = rotate(refDelta, -params.angleOffset);
-  const safeScale = scale || 1;
-  return {
-    startDx: localStart.x / safeScale,
-    startDy: localStart.y / safeScale,
-    endDx: localEnd.x / safeScale,
-    endDy: localEnd.y / safeScale,
-    dx: localEnd.x / safeScale,
-    dy: localEnd.y / safeScale,
-    angle: Math.atan2(localDelta.y, localDelta.x) * (180 / Math.PI),
-  };
-}
-
-export function instanceMotionVector(layer: Layer, index: number) {
-  return instanceMotionVectorForGeometry(
-    layer.params,
-    layer.scale,
-    layer.animation,
-    referenceInstancePoint(layer),
-    index
-  );
-}
-
-export function animationReachPaddingForGeometry(
-  params: RepeatParams,
-  scale: number,
-  raw: LayerAnimation | undefined,
-  referencePoint: Center
-) {
-  const v = instanceMotionVectorForGeometry(params, scale, raw, referencePoint, 0);
-  if (!v) return 0;
-  return Math.max(Math.hypot(v.startDx, v.startDy), Math.hypot(v.endDx, v.endDy));
-}
-
-export function animationReachPadding(layer: Layer) {
-  return animationReachPaddingForGeometry(
-    layer.params,
-    layer.scale,
-    layer.animation,
-    referenceInstancePoint(layer)
-  );
-}
-
-export function instanceMotionStyle(layer: Layer, index: number): CSSProperties | undefined {
-  if (!layer.animation?.enabled) return undefined;
-  const v = instanceMotionVector(layer, index);
-  if (!v) return undefined;
-  return {
-    "--motion-start-dx": `${v.startDx}px`,
-    "--motion-start-dy": `${v.startDy}px`,
-    "--motion-end-dx": `${v.endDx}px`,
-    "--motion-end-dy": `${v.endDy}px`,
-    "--motion-dx": `${v.dx}px`,
-    "--motion-dy": `${v.dy}px`,
-    "--motion-angle": `${v.angle}deg`,
-  } as CSSProperties;
-}
-
-export function instanceMotionStyleText(layer: Layer, index: number) {
-  if (!layer.animation?.enabled) return "";
-  const v = instanceMotionVector(layer, index);
-  if (!v) return "";
-  return ` style="--motion-start-dx:${v.startDx}px;--motion-start-dy:${v.startDy}px;--motion-end-dx:${v.endDx}px;--motion-end-dy:${v.endDy}px;--motion-dx:${v.dx}px;--motion-dy:${v.dy}px;--motion-angle:${v.angle}deg"`;
-}
-
-export function motionPathD(animation: CenterPathAnimation, layerCenter: Center) {
-  const { start, end } = animationPoints(animation, layerCenter);
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  return animation.closed || animation.path.closed ? `M 0 0 L ${dx} ${dy} L 0 0` : `M 0 0 L ${dx} ${dy}`;
-}
-
 export function directionForCss(animation: CenterPathAnimation) {
   return animation.direction === "out-and-back" ? "alternate" : "normal";
 }
@@ -168,47 +82,121 @@ export function normalizedAnimation(animation: CenterPathAnimation): CenterPathA
   };
 }
 
+/**
+ * A smooth SVG path `d` through `points` (Catmull-Rom → cubic Bézier). 2 points
+ * stay a straight line; `closed` appends Z (and wraps the tangents). Used for
+ * both the offset-path keyframe target and the on-canvas preview.
+ */
+export function smoothPathD(points: Center[], closed = false): string {
+  const p = points;
+  if (p.length < 2) return "";
+  if (p.length === 2) {
+    return `M ${num(p[0].x)} ${num(p[0].y)} L ${num(p[1].x)} ${num(p[1].y)}${closed ? " Z" : ""}`;
+  }
+  const last = p.length - 1;
+  let d = `M ${num(p[0].x)} ${num(p[0].y)}`;
+  for (let i = 0; i < last; i++) {
+    const p0 = p[i === 0 ? (closed ? last : 0) : i - 1];
+    const p1 = p[i];
+    const p2 = p[i + 1];
+    const p3 = p[i + 2 > last ? (closed ? 0 : last) : i + 2];
+    const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
+    const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+    d += ` C ${num(c1.x)} ${num(c1.y)} ${num(c2.x)} ${num(c2.y)} ${num(p2.x)} ${num(p2.y)}`;
+  }
+  if (closed) d += " Z";
+  return d;
+}
+
+/**
+ * The motion path expressed in copy-0's LOCAL frame: every point taken relative
+ * to the path's first point (so the copy starts at rest = (0,0)), un-rotated by
+ * the spoke angle, and divided by layer scale (the motion-wrapper sits inside
+ * repeat-scale). Each copy applies these same offsets in its own rotated frame,
+ * so the whole ring follows the path in radial symmetry. Null if < 2 points.
+ */
+export function motionLocalPoints(params: RepeatParams, scale: number, raw: LayerAnimation | undefined): Center[] | null {
+  if (!raw || raw.type !== "centerPath" || raw.path.points.length < 2) return null;
+  const animation = normalizedAnimation(raw);
+  const pts = animation.path.points;
+  const p0 = pts[0];
+  const s = scale || 1;
+  return pts.map((pt) => {
+    const v = rotate({ x: pt.x - p0.x, y: pt.y - p0.y }, -params.angleOffset);
+    return { x: v.x / s, y: v.y / s };
+  });
+}
+
+/** Farthest a copy travels from its rest position, in world px (for seam/bounds). */
+export function animationReachPaddingForGeometry(
+  _params: RepeatParams,
+  _scale: number,
+  raw: LayerAnimation | undefined,
+  _referencePoint?: Center
+) {
+  if (!raw || raw.type !== "centerPath" || !raw.enabled || raw.path.points.length < 2) return 0;
+  const p0 = raw.path.points[0];
+  let max = 0;
+  for (const pt of raw.path.points) max = Math.max(max, Math.hypot(pt.x - p0.x, pt.y - p0.y));
+  return max; // already world px (points are world coords)
+}
+
+export function animationReachPadding(layer: Layer) {
+  return animationReachPaddingForGeometry(layer.params, layer.scale, layer.animation);
+}
+
+/**
+ * CSS for one layer's center-path motion: the motion-wrapper (`.motion-{id}`)
+ * `translate`s through the path's local points (so 0% = translate(0,0) = rest —
+ * adding a path never shifts the artwork). For "follow path", the follow-wrapper
+ * rotates to the path tangent at each stop. One per-layer rule drives every copy
+ * (each copy applies it in its own rotated frame → radial symmetry).
+ */
 export function centerPathCss(layer: Layer, playing: boolean) {
   const raw = layer.animation;
   if (!raw || raw.type !== "centerPath" || !raw.enabled) return "";
   const animation = normalizedAnimation(raw);
+  const local = motionLocalPoints(layer.params, layer.scale, raw);
+  if (!local || local.length < 2) return "";
   const klass = motionClassName(layer.id);
-  const keyframes = `${klass}-keyframes`;
-  const rotateKeyframes = `${klass}-rotate-keyframes`;
+  const closed = animation.closed || animation.path.closed;
   const follow = animation.orientationMode === "followPath";
-  const middle = animation.closed || animation.path.closed
-    ? `  50% { transform: translate(var(--motion-end-dx), var(--motion-end-dy)); }
-  100% { transform: translate(var(--motion-start-dx), var(--motion-start-dy)); }`
-    : `  to { transform: translate(var(--motion-end-dx), var(--motion-end-dy)); }`;
-  const rotateMiddle = animation.closed || animation.path.closed
-    ? `  50% { transform: rotate(var(--motion-angle)); }
-  100% { transform: rotate(0deg); }`
-    : `  to { transform: rotate(var(--motion-angle)); }`;
+  const stops = closed ? [...local, local[0]] : local; // a closed loop returns to start
+  const n = stops.length;
+  const at = (i: number) => num((i / (n - 1)) * 100);
+  const timing = `${animation.durationSeconds}s ${animation.easing} ${animation.delaySeconds}s infinite`;
+  const playState = playing ? "running" : "paused";
+
+  const moveKf = stops.map((p, i) => `  ${at(i)}% { transform: translate(${num(p.x)}px, ${num(p.y)}px); }`).join("\n");
+
+  let rotateBlock = "";
+  if (follow) {
+    const angleAt = (i: number) => {
+      const a = stops[Math.min(i, n - 2)];
+      const b = stops[Math.min(i, n - 2) + 1];
+      return (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+    };
+    const rotKf = stops.map((_, i) => `  ${at(i)}% { transform: rotate(${num(angleAt(i))}deg); }`).join("\n");
+    rotateBlock = `
+.${klass} .instance-follow-wrapper {
+  animation: ${klass}-rotate ${timing};
+  animation-direction: ${directionForCss(animation)};
+  animation-play-state: ${playState};
+}
+@keyframes ${klass}-rotate {
+${rotKf}
+}`;
+  }
+
   return `
 .${klass} {
-  transform: translate(var(--motion-start-dx), var(--motion-start-dy));
-  animation: ${keyframes} ${animation.durationSeconds}s ${animation.easing} ${animation.delaySeconds}s infinite;
+  animation: ${klass}-keyframes ${timing};
   animation-direction: ${directionForCss(animation)};
-  animation-play-state: ${playing ? "running" : "paused"};
+  animation-play-state: ${playState};
 }
-@keyframes ${keyframes} {
-  from { transform: translate(var(--motion-start-dx), var(--motion-start-dy)); }
-${middle}
-}${
-    follow
-      ? `
-.${klass} .instance-follow-wrapper {
-  transform: rotate(0deg);
-  animation: ${rotateKeyframes} ${animation.durationSeconds}s ${animation.easing} ${animation.delaySeconds}s infinite;
-  animation-direction: ${directionForCss(animation)};
-  animation-play-state: ${playing ? "running" : "paused"};
-}
-@keyframes ${rotateKeyframes} {
-  from { transform: rotate(0deg); }
-${rotateMiddle}
-}`
-      : ""
-  }`;
+@keyframes ${klass}-keyframes {
+${moveKf}
+}${rotateBlock}`;
 }
 
 export function centerPathStyles(layers: Layer[], playing: boolean) {

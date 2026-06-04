@@ -28,6 +28,14 @@ const setMode = (m: "design" | "animate") =>
   click(Array.from(container.querySelectorAll(".mode-btn")).find((b) => b.textContent?.includes(m === "animate" ? "Animate" : "Design")));
 const newLayer = () => click(container.querySelector('[title="New layer"]'));
 const selectAll = () => keydown("a", { metaKey: true });
+// Enter draw mode and commit a freehand motion path (creates the animation).
+const drawMotionPath = () => {
+  click(button("Add motion path"));
+  const svg = container.querySelector("svg.canvas-svg")!;
+  act(() => svg.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 20, button: 0 })));
+  act(() => window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 60, clientY: 70 })));
+  act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 120, clientY: 90 })));
+};
 
 const rows = () => container.querySelectorAll(".layer-row");
 const canvas = () => container.querySelector("svg.canvas-svg")!;
@@ -122,13 +130,13 @@ describe("App layer interactions", () => {
 
   it("creates a center-path animation and toggles playback", () => {
     setMode("animate");
-    click(button("Add motion path"));
+    drawMotionPath();
     expect(canvas().querySelector(".motion-path-line")).toBeTruthy();
     expect(container.textContent).toContain("Duration");
 
     click(button("Preview"));
     const style = canvas().querySelector("style")?.textContent ?? "";
-    expect(style).toContain("translate(var(--motion-start-dx), var(--motion-start-dy))");
+    expect(style).toContain("@keyframes");
     expect(style).toContain("animation-play-state: running");
     expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper").length).toBeGreaterThan(0);
 
@@ -140,7 +148,7 @@ describe("App layer interactions", () => {
     newLayer(); // 2 layers
     selectAll();
     setMode("animate");
-    click(button("Add motion path"));
+    drawMotionPath();
     // both layers now report animation in the panel meta
     expect((container.textContent?.match(/· anim/g) ?? []).length).toBe(2);
     // and both have animated repeat wrappers on the canvas
@@ -155,26 +163,30 @@ describe("App layer interactions", () => {
     expect(canvas().querySelectorAll(".instance-motion-wrapper.motion-wrapper")).toHaveLength(24);
   });
 
-  it("allows dragging the center-path start handle", () => {
+  it("draws a freehand motion path", () => {
     setMode("animate");
     click(button("Add motion path"));
-    const start = canvas().querySelector(".motion-path-start")!;
-    const line = canvas().querySelector(".motion-path-line")!;
-    act(() => start.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 20, button: 0 })));
-    act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 30, clientY: 40 })));
-    expect(line.getAttribute("x1")).toBe("30");
-    expect(line.getAttribute("y1")).toBe("40");
+    const svg = canvas();
+    act(() => svg.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 20, button: 0 })));
+    act(() => window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 60, clientY: 70 })));
+    act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 120, clientY: 90 })));
+    // the committed path renders as a curve, and playback rides an offset-path
+    const d = canvas().querySelector(".motion-path-line")?.getAttribute("d") ?? "";
+    expect(d.startsWith("M")).toBe(true);
+    click(button("Preview"));
+    expect(canvas().querySelector("style")?.textContent ?? "").toContain("@keyframes");
   });
 
   it("keeps animated repeat instances synchronized when count changes during playback", () => {
     setMode("animate");
-    click(button("Add motion path"));
+    drawMotionPath();
     click(button("Preview"));
     setRange(sliderByLabel("Count"), 24);
     expect(instances()).toHaveLength(24);
     const wrappers = Array.from(canvas().querySelectorAll<SVGGElement>(".instance-motion-wrapper.motion-wrapper"));
     expect(wrappers.length).toBeGreaterThanOrEqual(24);
-    expect(wrappers.every((w) => w.style.getPropertyValue("--motion-dx"))).toBe(true);
+    // one per-layer offset-path drives every copy (no per-instance vars needed)
+    expect(canvas().querySelector("style")?.textContent ?? "").toContain("@keyframes");
   });
 
   it("hiding a layer removes it from the canvas but keeps the panel row", () => {

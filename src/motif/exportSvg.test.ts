@@ -123,17 +123,14 @@ describe("buildExportSvg (PRD §14)", () => {
     expect(ensureSvgFilename("  ")).toBe("radial-repeat.svg");
   });
 
-  it("animated export includes CSS motion path while static export does not", () => {
+  it("animated export includes the CSS motion path while static export does not", () => {
     const a = mk({ id: "a", center: { x: 10, y: 20 } });
     a.animation = createCenterPathAnimation(a, { x: 110, y: 70 });
 
-    expect(buildExportSvg([a])).not.toContain("--motion-dx");
+    expect(buildExportSvg([a])).not.toContain("@keyframes motion-a-keyframes");
     const svg = buildAnimatedExportSvg([a]);
-    expect(svg).toContain("translate(var(--motion-start-dx), var(--motion-start-dy))");
-    expect(svg).toContain("translate(var(--motion-end-dx), var(--motion-end-dy))");
     expect(svg).toContain("@keyframes motion-a-keyframes");
-    expect(svg).toContain("--motion-dx:50px");
-    expect(svg).toContain("--motion-dy:50px");
+    expect(svg).toContain("transform: translate(0px, 0px)");
     expect((svg.match(/class="instance-motion-wrapper motion-wrapper motion-a"/g) ?? []).length).toBe(4);
     expect(svg).not.toContain('clip-path="url(#seam-');
   });

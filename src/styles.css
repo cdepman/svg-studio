@@ -390,7 +390,13 @@
 
   /* ============================================================ TIMELINE */
   .timeline { flex: none; height: 190px; background: var(--panel); border-top: 1px solid var(--line); display: flex; flex-direction: column; }
+  .timeline.is-collapsed { height: 44px; }
   .tl-bar { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+  .timeline.is-collapsed .tl-bar { border-bottom: none; }
+  .tl-collapse { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: none; border: none; color: var(--muted); cursor: pointer; }
+  .tl-collapse:hover { color: var(--text); background: var(--panel-2); }
+  .tl-collapse svg { width: 13px; height: 13px; transition: transform .12s; }
+  .tl-collapse.is-collapsed svg { transform: rotate(-90deg); }
   .tl-transport { display: flex; align-items: center; gap: 4px; }
   .tl-transport button { width: 32px; height: 32px; display: grid; place-items: center; background: none; border: none; border-radius: var(--r-sm); color: var(--muted); }
   .tl-transport button:hover { background: var(--panel-2); color: var(--text); }
@@ -462,10 +468,19 @@
   .center-hit:active { cursor: grabbing; }
 
   .motion-wrapper { transform-box: fill-box; }
-  .motion-path-line { stroke: var(--teal); stroke-width: 2; stroke-dasharray: 8 5; vector-effect: non-scaling-stroke; pointer-events: none; }
+  /* Motion-path draw mode: pencil cursor + focus on the primary petal. */
+  .canvas-svg.drawing-path { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2316c5b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20l4-1 11-11-3-3L5 16l-1 4z'/%3E%3Cpath d='M14 6l3 3'/%3E%3C/svg%3E") 2 22, crosshair; }
+  .canvas-svg.drawing-path .instance-placement { opacity: 0.14; transition: opacity .15s; }
+  .canvas-svg.drawing-path .instance-placement[data-i="0"] { opacity: 1; }
+  .motion-anchor { fill: var(--teal); stroke: #06201d; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .motion-anchor-halo { fill: none; stroke: var(--teal); stroke-width: 1.5; vector-effect: non-scaling-stroke; opacity: 0.5;
+    transform-box: fill-box; transform-origin: center; animation: anchor-pulse 1.4s ease-out infinite; }
+  @keyframes anchor-pulse { 0% { transform: scale(0.6); opacity: 0.7; } 100% { transform: scale(1.5); opacity: 0; } }
+  .motion-path-ui { pointer-events: none; }
+  .motion-path-line { fill: none; stroke: var(--teal); stroke-width: 2; stroke-dasharray: 8 5;
+    stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
   .motion-path-line.closed { stroke-dasharray: 3 4; }
-  .motion-path-start { fill: #06201d; stroke: var(--teal); stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; }
-  .motion-path-end { fill: #fff; stroke: var(--teal); stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; }
+  .motion-path-start { fill: #06201d; stroke: var(--teal); stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
 
   .pencil-preview { opacity: 0.9; }
   .pencil-anchor { fill: #fff; stroke: var(--mode); stroke-width: 2; vector-effect: non-scaling-stroke; }

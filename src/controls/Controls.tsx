@@ -338,15 +338,21 @@ function AnimateInspector(props: ControlsProps) {
         </button>
       </section>
 
-      {animation ? (
+      {animation || drawingMotionPath ? (
         <>
           <section className="group">
             <h2 className="group-title">Motion path <span className="gt-line" /></h2>
-            <div className="anim-actions" style={{ marginBottom: 15 }}>
+            <div className="anim-actions" style={{ marginBottom: animation ? 15 : 0 }}>
               <button className={`btn${drawingMotionPath ? " btn-accent" : ""}`} onClick={onBeginAnimateCenter}>
-                {Icon.pen({ size: 15 })} Edit path
+                {Icon.pen({ size: 15 })} {drawingMotionPath ? "Drawing… draw on canvas" : animation ? "Redraw path" : "Draw path"}
               </button>
             </div>
+            {drawingMotionPath && (
+              <div className="empty-note" style={{ padding: "10px 2px 4px", textAlign: "left" }}>
+                Draw a stroke on the canvas, starting from the highlighted petal. Every copy will follow it relative to the center.
+              </div>
+            )}
+            {animation && <>
             <ValueSlider label="Duration" value={animation.durationSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
               onChange={(v) => onUpdateAnimation((a) => ({ ...a, durationSeconds: v }))} />
             <ValueSlider label="Delay" value={animation.delaySeconds} min={0} max={10} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
@@ -377,6 +383,7 @@ function AnimateInspector(props: ControlsProps) {
               onChange={(value) => onUpdateAnimation((a) => ({ ...a, orientationMode: value }))} />
             <div style={{ height: 12 }} />
             <button className="danger-link" onClick={onDeleteAnimation}>Delete motion path</button>
+            </>}
           </section>
         </>
       ) : (

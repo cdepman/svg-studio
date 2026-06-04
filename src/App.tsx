@@ -35,7 +35,6 @@ import {
   downloadSvg,
 } from "./motif/exportSvg";
 import {
-  animationPoints,
   centerPathStyles,
   createCenterPathAnimation,
   normalizedAnimation,
@@ -115,6 +114,16 @@ const DEFAULT_PARAMS: RepeatParams = {
 // render just draws the single shape, so it's harmless.)
 const DRAWN_PARAMS: RepeatParams = { ...DEFAULT_PARAMS, count: 1, radiusOffset: 0 };
 
+/** Evenly thin a dense freehand point list down to at most `max` points (keeps
+ *  first + last) so a drawn motion path stays a compact, smooth curve. */
+function downsamplePath(points: Center[], max: number): Center[] {
+  if (points.length <= max) return points;
+  const out: Center[] = [];
+  for (let k = 0; k < max - 1; k++) out.push(points[Math.round((k * (points.length - 1)) / (max - 1))]);
+  out.push(points[points.length - 1]);
+  return out;
+}
+
 const HISTORY_LIMIT = 100;
 
 function resolveAction<T>(action: StateAction<T>, prev: T): T {
@@ -147,6 +156,7 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [drawingMotionPath, setDrawingMotionPath] = useState(false);
+  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
   const [animationPlaying, setAnimationPlaying] = useState(false);
   const [tool, setTool] = useState<"select" | "pencil">("select");
   const [pencil, setPencil] = useState<PencilSettings>(DEFAULT_PENCIL);
@@ -213,15 +223,16 @@ export default function App() {
     [layers, animationPlaying, dragging]
   );
   const primaryMotionPath = useMemo(() => {
-    if (!primary?.animation || primary.animation.type !== "centerPath") {
-      return drawingMotionPath && primary
-        ? { start: referenceInstancePoint(primary), end: referenceInstancePoint(primary), closed: false }
-        : null;
-    }
+    if (!primary?.animation || primary.animation.type !== "centerPath") return null;
     const animation = normalizedAnimation(primary.animation);
-    const { start, end } = animationPoints(animation, referenceInstancePoint(primary));
-    return { start, end, closed: animation.closed || animation.path.closed };
-  }, [primary, drawingMotionPath]);
+    return { points: animation.path.points, closed: animation.closed || animation.path.closed };
+  }, [primary]);
+  // While drawing a motion path, the stroke is anchored to the primary petal's
+  // center (its copy-0 rest position) so the path always "starts from the petal".
+  const motionAnchor = useMemo(
+    () => (drawingMotionPath && primary ? referenceInstancePoint(primary) : null),
+    [drawingMotionPath, primary]
+  );
 
   // Specs for EVERY editable layer, so grabbing any layer's artwork can move it.
   const allEditable = useMemo(() => layers.filter((l) => l.visible && !l.locked), [layers]);
@@ -659,44 +670,30 @@ export default function App() {
     );
   }
 
-  // Add a center-path animation to every editable-selected layer (each around
-  // its own center), then edit the path.
+  // Enter (or cancel) pencil draw mode for the motion path. The animation itself
+  // is only created once a path is actually drawn (onMotionPathDrawn) — so
+  // clicking the button never alters the artwork or drops a confusing default.
   function beginAnimateCenter() {
-    const ids = editableIdsRef.current;
-    if (ids.size === 0) return;
-    updateLayers((ls) =>
-      ls.map((l) =>
-        ids.has(l.id) && !l.animation
-          ? { ...l, animation: createCenterPathAnimation(l), updatedAt: Date.now() }
-          : l
-      )
-    );
-    setDrawingMotionPath(true);
+    if (editableIdsRef.current.size === 0) return;
+    setDrawingMotionPath((d) => !d);
   }
 
-  function commitMotionPathPoint(handle: "start" | "end", point: Center) {
-    if (!primary) return;
+  // Commit a freehand-drawn motion path. The drawn SHAPE (points relative to the
+  // first point) is shared by every selected layer, anchored at each layer's own
+  // reference point — so a multi-selection animates with one path shape.
+  function onMotionPathDrawn(rawPoints: Center[]) {
+    if (rawPoints.length < 2) return;
+    const pts = downsamplePath(rawPoints, 48);
+    const p0 = pts[0];
+    const rel = pts.map((p) => ({ x: p.x - p0.x, y: p.y - p0.y }));
     const ids = editableIdsRef.current;
-    // The dragged handle's offset relative to the PRIMARY's reference point is
-    // applied to every selected layer relative to ITS reference — so a multi-
-    // selection animates with the same path shape. (Single-select is identical.)
-    const primaryRef = referenceInstancePoint(primary);
-    const rel = { x: point.x - primaryRef.x, y: point.y - primaryRef.y };
     updateLayers((ls) =>
       ls.map((l) => {
         if (!ids.has(l.id)) return l;
         const ref = referenceInstancePoint(l);
-        const moved = { x: ref.x + rel.x, y: ref.y + rel.y };
-        const current = l.animation?.type === "centerPath" ? l.animation : createCenterPathAnimation(l, moved);
-        const closed = current.direction === "loop" ? true : current.closed;
-        const { start, end } = animationPoints(current, ref);
-        const nextStart = handle === "start" ? moved : start;
-        const nextEnd = handle === "end" ? moved : end;
-        return {
-          ...l,
-          animation: { ...current, closed, path: { ...current.path, points: [nextStart, nextEnd], closed } },
-          updatedAt: Date.now(),
-        };
+        const points = rel.map((r) => ({ x: ref.x + r.x, y: ref.y + r.y }));
+        const current = l.animation?.type === "centerPath" ? l.animation : createCenterPathAnimation(l);
+        return { ...l, animation: { ...current, path: { ...current.path, points } }, updatedAt: Date.now() };
       })
     );
     setDrawingMotionPath(false);
@@ -1183,7 +1180,9 @@ export default function App() {
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}
         >
-          {/* tool rail (select / pencil / eyedropper + always-on color swatch) */}
+          {/* tool rail (select / pencil / eyedropper + always-on color swatch).
+              Hidden in Animate mode — those tools only apply to design editing. */}
+          {mode === "design" && (
           <div className="tool-rail">
             <button className={`tool-btn${tool === "select" ? " is-active" : ""}`} onClick={() => switchTool("select")} title="Select / move (V)">{Icon.cursor()}</button>
             <button className={`tool-btn${tool === "pencil" ? " is-active" : ""}`} onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")} title="Pencil — draw a shape (P)">{Icon.pen()}</button>
@@ -1194,6 +1193,7 @@ export default function App() {
                 onChange={(e) => applyColor(e.target.value)} />
             </label>
           </div>
+          )}
 
           {tool === "pencil" && (
             <div className="pencil-panel">
@@ -1244,6 +1244,7 @@ export default function App() {
             motionCss={motionCss}
             motionPath={mode === "animate" ? primaryMotionPath : null}
             drawingMotionPath={mode === "animate" && drawingMotionPath}
+            motionAnchor={mode === "animate" ? motionAnchor : null}
             animationsMoving={animationPlaying && mode === "animate" && !dragging && tool !== "pencil"}
             tool={tool}
             pencil={pencil}
@@ -1255,7 +1256,7 @@ export default function App() {
             scene={scene}
             onLayerPointerDown={onLayerPointerDown}
             onMarqueeSelect={onMarqueeSelect}
-            onMotionPathCommit={commitMotionPathPoint}
+            onMotionPathDrawn={onMotionPathDrawn}
             onResizePointerDown={onResizePointerDown}
             onRotatePointerDown={onRotatePointerDown}
             onZoom={zoomAt}
@@ -1272,7 +1273,7 @@ export default function App() {
           {/* hint chip */}
           <div className="canvas-hint">
             {mode === "animate" && drawingMotionPath
-              ? <>{Icon.pen({ size: 14 })} Drag the path handles to shape the motion</>
+              ? <>{Icon.pen({ size: 14 })} Draw the path each copy follows · relative to the center</>
               : tool === "pencil"
               ? <>{Icon.pen({ size: 14 })} Draw a shape · multiple strokes compose one motif</>
               : partEdit
@@ -1316,10 +1317,12 @@ export default function App() {
           playTime={playTime}
           playing={animationPlaying}
           loop={loop}
+          collapsed={timelineCollapsed}
           selectedId={primaryId}
           onTogglePlay={() => setAnimationPlaying((p) => !p)}
           onToStart={() => { setAnimationPlaying(false); setPlayTime(0); }}
           onToggleLoop={() => setLoop((l) => !l)}
+          onToggleCollapse={() => setTimelineCollapsed((c) => !c)}
           onScrub={(t) => setPlayTime(t)}
           onSelect={(id) => selectSingle(id)}
         />

@@ -51,6 +51,7 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       motionCss=""
       motionPath={null}
       drawingMotionPath={false}
+      motionAnchor={null}
       animationsMoving={false}
       tool="select"
       pencil={{ size: 18, smoothing: 55 }}
@@ -62,7 +63,7 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       scene={scene}
       onLayerPointerDown={() => {}}
       onMarqueeSelect={() => {}}
-      onMotionPathCommit={() => {}}
+      onMotionPathDrawn={() => {}}
       onResizePointerDown={() => {}}
       onRotatePointerDown={() => {}}
       onZoom={() => {}}

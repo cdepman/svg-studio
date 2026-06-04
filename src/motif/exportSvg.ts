@@ -10,14 +10,7 @@ import {
   paintOrder,
   seamHalves,
 } from "../canvas/repeatMath";
-import {
-  animationReachPadding,
-  animationPoints,
-  centerPathStyles,
-  instanceMotionStyleText,
-  motionClassName,
-  referenceInstancePoint,
-} from "../motion/centerPath";
+import { animationReachPadding, centerPathStyles, motionClassName } from "../motion/centerPath";
 import {
   effectsReachPadding,
   effectsStyles,
@@ -49,12 +42,8 @@ function animatedLayerBounds(layer: Layer) {
   const b = layerBounds(layer);
   const { params, motif, scale } = layer;
   const halfDiag = 0.5 * Math.hypot(motif.box.width, motif.box.height) * maxAbsScale(params);
-  const path =
-    layer.animation && layer.animation.type === "centerPath"
-      ? animationPoints(layer.animation, referenceInstancePoint(layer))
-      : null;
-  const deltaReach = path ? Math.hypot(path.end.x - path.start.x, path.end.y - path.start.y) : 0;
-  const reach = (params.radiusOffset + halfDiag) * scale + deltaReach + effectsReachPadding(layer) * scale;
+  // The motion path's farthest travel is world px; effects reach is local px.
+  const reach = (params.radiusOffset + halfDiag + effectsReachPadding(layer)) * scale + animationReachPadding(layer);
   return {
     minX: Math.min(b.minX, layer.center.x - reach),
     minY: Math.min(b.minY, layer.center.y - reach),
@@ -84,7 +73,7 @@ function layerMarkup(layer: Layer, animated: boolean): string {
     `          <g>
             <g class="instance-placement" transform="${anim ? instanceSpokeTransform(params, i) : instanceTransform(params, i)}" opacity="${instanceOpacity(params, i)}">
               <g class="instance-radial-wrapper"${anim ? instanceEffectStyleText(layer, i) : ""}>
-                <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}"${anim ? instanceMotionStyleText(layer, i) : ""}>
+                <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}">
                   <g class="instance-local-transform"${anim ? ` transform="${instanceLocalTransform(params, i)}"` : ""}>
                     <g class="instance-spin-wrapper"><g class="instance-pulse-wrapper">
                       <g class="instance-follow-wrapper">
