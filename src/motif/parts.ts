@@ -10,6 +10,7 @@ import { IDENTITY_PART_TRANSFORM, type Box, type Motif, type MotifPart, type Par
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const PAINTABLE = "path,rect,circle,ellipse,line,polyline,polygon";
+const NON_RENDERED_ANCESTOR = "defs,clipPath,mask,symbol,marker,pattern,linearGradient,radialGradient";
 
 let partCounter = 0;
 export function newPartId(): string {
@@ -19,6 +20,11 @@ export function newPartId(): string {
 
 const titleCase = (tag: string) => tag.charAt(0).toUpperCase() + tag.slice(1);
 const n = (v: number) => Number(v.toFixed(4));
+const escAttr = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
 
 function isIdentity(t: PartTransform): boolean {
   return t.tx === 0 && t.ty === 0 && t.rotation === 0 && t.scale === 1;
@@ -147,7 +153,7 @@ export function appendPart(motif: Motif, part: MotifPart): Motif {
  * preserved. Part centers are measured in one offscreen mount.
  */
 export function partsFromSvg(svgEl: SVGSVGElement): MotifPart[] {
-  const leaves = Array.from(svgEl.querySelectorAll(PAINTABLE));
+  const leaves = Array.from(svgEl.querySelectorAll(PAINTABLE)).filter((el) => !el.closest(NON_RENDERED_ANCESTOR));
   const parts: MotifPart[] = leaves.map((el, i) => {
     let markup = el.outerHTML;
     let groupName: string | null = null;
@@ -155,8 +161,11 @@ export function partsFromSvg(svgEl: SVGSVGElement): MotifPart[] {
     while (node && node !== svgEl) {
       if (node.tagName.toLowerCase() === "g") {
         if (!groupName) groupName = node.getAttribute("id");
-        const t = node.getAttribute("transform");
-        if (t) markup = `<g transform="${t}">${markup}</g>`;
+        const attrs = Array.from(node.attributes)
+          .filter((attr) => attr.name !== "id")
+          .map((attr) => `${attr.name}="${escAttr(attr.value)}"`)
+          .join(" ");
+        if (attrs) markup = `<g ${attrs}>${markup}</g>`;
       }
       node = node.parentElement;
     }

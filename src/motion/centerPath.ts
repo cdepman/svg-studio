@@ -199,6 +199,8 @@ ${moveKf}
 }${rotateBlock}`;
 }
 
-export function centerPathStyles(layers: Layer[], playing: boolean) {
-  return layers.map((layer) => centerPathCss(layer, playing)).filter(Boolean).join("\n");
+/** `playing` may be a flag (export) or a per-layer predicate (independent play). */
+export function centerPathStyles(layers: Layer[], playing: boolean | ((layer: Layer) => boolean)) {
+  const isPlaying = typeof playing === "function" ? playing : () => playing;
+  return layers.map((layer) => centerPathCss(layer, isPlaying(layer))).filter(Boolean).join("\n");
 }

@@ -6,6 +6,7 @@
 // (native input/change listeners) so a slider drag triggers ZERO React renders.
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../ui/icons";
+import { ANIMATION_PRESETS, cloneEffects } from "../motion/presets";
 import type { CenterPathAnimation, DesignView, EditorMode, Layer, LayerEffects, OrientationMode, RepeatParams } from "../types";
 import type { NumericParamKey } from "../canvas/useScene";
 import type { MotifLibraryItem } from "../motifLibrary";
@@ -15,6 +16,7 @@ const DEFAULT_EFFECTS: LayerEffects = {
   compositeSpin: { enabled: false, periodSeconds: 12, direction: "cw" },
   scalePulse: { enabled: false, periodSeconds: 3, amount: 0.2, stagger: false },
   radialPulse: { enabled: false, periodSeconds: 3, amount: 40, stagger: false },
+  wave: { enabled: false, periodSeconds: 4, amount: 40, frequency: 3, direction: "cw", stagger: false },
 };
 
 interface ControlsProps {
@@ -323,64 +325,117 @@ function DesignInspector(props: ControlsProps) {
   );
 }
 
-function EffectsSection({ effects, onUpdateEffects }: { effects: LayerEffects; onUpdateEffects: ControlsProps["onUpdateEffects"]; }) {
+/** One animation effect as a self-contained card: bold name + enable toggle in
+ *  the header, its controls grouped in the body when on. */
+function EffectCard({ name, hint, enabled, onToggle, children }: {
+  name: string;
+  hint?: string;
+  enabled: boolean;
+  onToggle: (v: boolean) => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className={`fx-card${enabled ? " is-on" : ""}`}>
+      <button className="fx-head" onClick={() => onToggle(!enabled)}>
+        <span className="fx-meta">
+          <span className="fx-name">{name}</span>
+          {hint && <span className="fx-hint">{hint}</span>}
+        </span>
+        <span className={`toggle-track${enabled ? " is-on" : ""}`}><span className="toggle-knob" /></span>
+      </button>
+      {enabled && <div className="fx-body">{children}</div>}
+    </div>
+  );
+}
+
+const FxLabel = ({ children }: { children: React.ReactNode }) => <div className="fx-sublabel">{children}</div>;
+
+function EffectsSection({
+  effects,
+  onCommitAbsolute,
+  onUpdateEffects,
+}: {
+  effects: LayerEffects;
+  onCommitAbsolute: ControlsProps["onCommitAbsolute"];
+  onUpdateEffects: ControlsProps["onUpdateEffects"];
+}) {
   const dirOpts: [LayerEffects["individualSpin"]["direction"], string][] = [["cw", "Clockwise"], ["ccw", "Counter-cw"]];
   return (
     <section className="group">
-      <h2 className="group-title">Effects <span className="gt-line" /></h2>
+      <h2 className="group-title">Motion recipes <span className="gt-line" /></h2>
+      <div className="preset-grid">
+        {ANIMATION_PRESETS.map((preset) => (
+          <button
+            key={preset.id}
+            className="preset-btn"
+            onClick={() => {
+              onUpdateEffects(() => cloneEffects(preset.effects));
+              if (preset.params) onCommitAbsolute(preset.params);
+            }}
+            title={preset.hint}
+          >
+            <span>{preset.name}</span>
+          </button>
+        ))}
+      </div>
 
-      <Toggle label="Spin petals" checked={effects.individualSpin.enabled}
-        onChange={(v) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, enabled: v } }))} />
-      {effects.individualSpin.enabled && (
-        <>
-          <ValueSlider label="Spin period" value={effects.individualSpin.periodSeconds} min={0.5} max={30} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
-            onChange={(v) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, periodSeconds: v } }))} />
-          <RadioGroup value={effects.individualSpin.direction} options={dirOpts}
-            onChange={(d) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, direction: d } }))} />
-          <Toggle label="Stagger around ring" checked={effects.individualSpin.stagger}
-            onChange={(v) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, stagger: v } }))} />
-        </>
-      )}
+      <div style={{ height: 18 }} />
+      <h2 className="group-title">Fine tune <span className="gt-line" /></h2>
 
-      <div style={{ height: 10 }} />
-      <Toggle label="Spin whole ring" checked={effects.compositeSpin.enabled}
-        onChange={(v) => onUpdateEffects((e) => ({ ...e, compositeSpin: { ...e.compositeSpin, enabled: v } }))} />
-      {effects.compositeSpin.enabled && (
-        <>
-          <ValueSlider label="Ring period" value={effects.compositeSpin.periodSeconds} min={1} max={60} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
-            onChange={(v) => onUpdateEffects((e) => ({ ...e, compositeSpin: { ...e.compositeSpin, periodSeconds: v } }))} />
-          <RadioGroup value={effects.compositeSpin.direction} options={dirOpts}
-            onChange={(d) => onUpdateEffects((e) => ({ ...e, compositeSpin: { ...e.compositeSpin, direction: d } }))} />
-        </>
-      )}
+      <EffectCard name="Individual spin" hint="Each copy turns in place, on its own center." enabled={effects.individualSpin.enabled}
+        onToggle={(v) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, enabled: v } }))}>
+        <ValueSlider label="Period" value={effects.individualSpin.periodSeconds} min={0.5} max={30} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, periodSeconds: v } }))} />
+        <FxLabel>Direction</FxLabel>
+        <RadioGroup value={effects.individualSpin.direction} options={dirOpts}
+          onChange={(d) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, direction: d } }))} />
+        <Toggle label="Stagger around ring" checked={effects.individualSpin.stagger}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, individualSpin: { ...e.individualSpin, stagger: v } }))} />
+      </EffectCard>
 
-      <div style={{ height: 10 }} />
-      <Toggle label="Scale pulse" checked={effects.scalePulse.enabled}
-        onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, enabled: v } }))} />
-      {effects.scalePulse.enabled && (
-        <>
-          <ValueSlider label="Pulse period" value={effects.scalePulse.periodSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
-            onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, periodSeconds: v } }))} />
-          <ValueSlider label="Amount" value={effects.scalePulse.amount} min={0.05} max={1} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`}
-            onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, amount: v } }))} />
-          <Toggle label="Stagger around ring" checked={effects.scalePulse.stagger}
-            onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, stagger: v } }))} />
-        </>
-      )}
+      <EffectCard name="Composite rotation" hint="The whole design turns around its center." enabled={effects.compositeSpin.enabled}
+        onToggle={(v) => onUpdateEffects((e) => ({ ...e, compositeSpin: { ...e.compositeSpin, enabled: v } }))}>
+        <ValueSlider label="Period" value={effects.compositeSpin.periodSeconds} min={1} max={60} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, compositeSpin: { ...e.compositeSpin, periodSeconds: v } }))} />
+        <FxLabel>Direction</FxLabel>
+        <RadioGroup value={effects.compositeSpin.direction} options={dirOpts}
+          onChange={(d) => onUpdateEffects((e) => ({ ...e, compositeSpin: { ...e.compositeSpin, direction: d } }))} />
+      </EffectCard>
 
-      <div style={{ height: 10 }} />
-      <Toggle label="Radial pulse" checked={effects.radialPulse.enabled}
-        onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, enabled: v } }))} />
-      {effects.radialPulse.enabled && (
-        <>
-          <ValueSlider label="Pulse period" value={effects.radialPulse.periodSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
-            onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, periodSeconds: v } }))} />
-          <ValueSlider label="Amount" value={effects.radialPulse.amount} min={5} max={300} step={5} fmt={(v) => `${Math.round(v)}px`}
-            onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, amount: v } }))} />
-          <Toggle label="Stagger around ring" checked={effects.radialPulse.stagger}
-            onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, stagger: v } }))} />
-        </>
-      )}
+      <EffectCard name="Grow & shrink" hint="Each copy scales up and down in place." enabled={effects.scalePulse.enabled}
+        onToggle={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, enabled: v } }))}>
+        <ValueSlider label="Period" value={effects.scalePulse.periodSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, periodSeconds: v } }))} />
+        <ValueSlider label="Amount" value={effects.scalePulse.amount} min={0.05} max={1} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, amount: v } }))} />
+        <Toggle label="Stagger around ring" checked={effects.scalePulse.stagger}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, scalePulse: { ...e.scalePulse, stagger: v } }))} />
+      </EffectCard>
+
+      <EffectCard name="Radiate from center" hint="Each copy slides outward and back toward the center." enabled={effects.radialPulse.enabled}
+        onToggle={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, enabled: v } }))}>
+        <ValueSlider label="Period" value={effects.radialPulse.periodSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, periodSeconds: v } }))} />
+        <ValueSlider label="Amount" value={effects.radialPulse.amount} min={5} max={300} step={5} fmt={(v) => `${Math.round(v)}px`}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, amount: v } }))} />
+        <Toggle label="Stagger around ring" checked={effects.radialPulse.stagger}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, radialPulse: { ...e.radialPulse, stagger: v } }))} />
+      </EffectCard>
+
+      <EffectCard name="Ripple around ring" hint="A wave travels around the ring, copy to copy." enabled={effects.wave.enabled}
+        onToggle={(v) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, enabled: v } }))}>
+        <ValueSlider label="Period" value={effects.wave.periodSeconds} min={0.5} max={20} step={0.5} fmt={(v) => `${v.toFixed(1)}s`}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, periodSeconds: v } }))} />
+        <ValueSlider label="Width" value={effects.wave.amount} min={5} max={220} step={5} fmt={(v) => `${Math.round(v)}px`}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, amount: v } }))} />
+        <ValueSlider label="Waves" value={effects.wave.frequency} min={1} max={16} step={0.5} fmt={(v) => v.toFixed(1)}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, frequency: v } }))} />
+        <FxLabel>Direction</FxLabel>
+        <RadioGroup value={effects.wave.direction} options={dirOpts}
+          onChange={(d) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, direction: d } }))} />
+        <Toggle label="Organic variation" checked={effects.wave.stagger}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, stagger: v } }))} />
+      </EffectCard>
     </section>
   );
 }
@@ -388,13 +443,13 @@ function EffectsSection({ effects, onUpdateEffects }: { effects: LayerEffects; o
 function AnimateInspector(props: ControlsProps) {
   const { primary, animationEditable, drawingMotionPath, animationPlaying, onBeginAnimateCenter, onTogglePlayback, onDeleteAnimation, onUpdateAnimation, onUpdateEffects } = props;
   const animation = primary!.animation?.type === "centerPath" ? primary!.animation : null;
-  const effects = primary!.effects ?? DEFAULT_EFFECTS;
+  const effects = { ...DEFAULT_EFFECTS, ...(primary!.effects ?? {}) };
 
   return (
     <div className="insp-scroll scroll">
       <section className="group">
         <button className="play-btn" onClick={onTogglePlayback} style={{ marginBottom: 13 }} disabled={!animationEditable}>
-          {animationPlaying ? Icon.pause() : Icon.play()} {animationPlaying ? "Pause" : "Preview"}
+          {animationPlaying ? Icon.pause() : Icon.play()} {animationPlaying ? "Pause" : "Play"}
         </button>
       </section>
 
@@ -454,7 +509,7 @@ function AnimateInspector(props: ControlsProps) {
         </section>
       )}
 
-      <EffectsSection effects={effects} onUpdateEffects={onUpdateEffects} />
+      <EffectsSection effects={effects} onCommitAbsolute={props.onCommitAbsolute} onUpdateEffects={onUpdateEffects} />
 
       <RepeatGroups {...props} collapsibleSecondary />
     </div>

@@ -18,6 +18,16 @@ const ring = `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
   </g>
 </svg>`;
 
+const clippedDot = `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>.dot { clip-path: url(#dotClip); opacity: .8; }</style>
+    <clipPath id="dotClip"><circle cx="20" cy="20" r="10"/></clipPath>
+  </defs>
+  <g class="dot">
+    <rect x="10" y="10" width="20" height="20" fill="#ffb8da"/>
+  </g>
+</svg>`;
+
 describe("motif parts", () => {
   it("flattens an imported SVG into one part per paintable leaf", () => {
     const motif = importSvgFromText(ring);
@@ -31,6 +41,15 @@ describe("motif parts", () => {
     // The two rod paths carry both the Background translate and their own rotate.
     expect(motif.parts?.[1].baseMarkup).toContain("translate(10,0)");
     expect(motif.parts?.[1].baseMarkup).toContain("rotate(30)");
+  });
+
+  it("preserves class-based ancestor clipping when flattening paintable leaves", () => {
+    const motif = importSvgFromText(clippedDot);
+    expect(motif.parts?.length).toBe(1);
+    expect(motif.parts?.[0].baseMarkup).toContain('class="dot"');
+    expect(motif.innerHtml).toContain(".dot");
+    expect(motif.innerHtml).toContain("clip-path: url(#dotClip)");
+    expect(motif.innerHtml).toContain("<rect");
   });
 
   it("derives innerHtml from the visible parts; hiding one drops it", () => {

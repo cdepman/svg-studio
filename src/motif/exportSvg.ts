@@ -72,14 +72,16 @@ function layerMarkup(layer: Layer, animated: boolean): string {
   const useEl = (i: number, alt = false) =>
     `          <g>
             <g class="instance-placement" transform="${anim ? instanceSpokeTransform(params, i) : instanceTransform(params, i)}" opacity="${instanceOpacity(params, i)}">
-              <g class="instance-radial-wrapper"${anim ? instanceEffectStyleText(layer, i) : ""}>
-                <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}">
-                  <g class="instance-local-transform"${anim ? ` transform="${instanceLocalTransform(params, i)}"` : ""}>
-                    <g class="instance-spin-wrapper"><g class="instance-pulse-wrapper">
-                      <g class="instance-follow-wrapper">
-                        <use${alt ? ' class="alt"' : ""} href="${hrefForIndex(i)}"/>
-                      </g>
-                    </g></g>
+              <g class="instance-motion-wrapper motion-wrapper ${motionClassName(id)}">
+                <g class="instance-radial-wrapper"${anim ? instanceEffectStyleText(layer, i) : ""}>
+                  <g class="instance-wave-wrapper">
+                    <g class="instance-local-transform"${anim ? ` transform="${instanceLocalTransform(params, i)}"` : ""}>
+                      <g class="instance-spin-wrapper"><g class="instance-pulse-wrapper">
+                        <g class="instance-follow-wrapper">
+                          <use${alt ? ' class="alt"' : ""} href="${hrefForIndex(i)}"/>
+                        </g>
+                      </g></g>
+                    </g>
                   </g>
                 </g>
               </g>

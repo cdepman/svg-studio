@@ -60,7 +60,7 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
   // both carry `instance` so the imperative sweep updates them together. The
   // effects signature is in the key so toggling an effect remounts cleanly.
   const effectSig = e
-    ? `${+e.individualSpin.enabled}${+e.compositeSpin.enabled}${+e.scalePulse.enabled}${+e.radialPulse.enabled}`
+    ? `${+e.individualSpin.enabled}${+e.compositeSpin.enabled}${+e.scalePulse.enabled}${+e.radialPulse.enabled}${+e.wave?.enabled}`
     : "";
   const instanceKeyPrefix = animated
     ? `${p.count}:${p.angleOffset}:${p.radiusOffset}:${layer.scale}:${effectSig}`
@@ -73,15 +73,20 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
         transform={animated ? instanceSpokeTransform(p, i) : instanceTransform(p, i)}
         opacity={instanceOpacity(p, i)}
       >
-        {/* radial-pulse wrapper: translateX runs along the spoke (outward). */}
-        <g className="instance-radial-wrapper" style={instanceEffectStyle(layer, i)}>
-          <g className={`instance-motion-wrapper motion-wrapper ${motionClassName(layer.id)}`}>
-            <g className="instance-local-transform" transform={animated ? instanceLocalTransform(p, i) : undefined}>
-              {/* spin + pulse wrappers rotate/scale the copy about its own center. */}
-              <g className="instance-spin-wrapper">
-                <g className="instance-pulse-wrapper">
-                  <g className="instance-follow-wrapper">
-                    <use data-i={i} className={alt ? "instance alt" : "instance"} href={hrefForIndex(i)} />
+        <g className={`instance-motion-wrapper motion-wrapper ${motionClassName(layer.id)}`}>
+          {/* radial-pulse wrapper: translateX runs along the spoke (outward).
+              It must be INSIDE motion-{id} so the radial CSS (a descendant
+              selector) matches; it also holds the per-copy effect vars. */}
+          <g className="instance-radial-wrapper" style={instanceEffectStyle(layer, i)}>
+            {/* wave wrapper: translateY runs tangent to the spoke. */}
+            <g className="instance-wave-wrapper">
+              <g className="instance-local-transform" transform={animated ? instanceLocalTransform(p, i) : undefined}>
+                {/* spin + pulse wrappers rotate/scale the copy about its own center. */}
+                <g className="instance-spin-wrapper">
+                  <g className="instance-pulse-wrapper">
+                    <g className="instance-follow-wrapper">
+                      <use data-i={i} className={alt ? "instance alt" : "instance"} href={hrefForIndex(i)} />
+                    </g>
                   </g>
                 </g>
               </g>

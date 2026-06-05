@@ -28,6 +28,7 @@ const allOff: LayerEffects = {
   compositeSpin: { enabled: false, periodSeconds: 12, direction: "cw" },
   scalePulse: { enabled: false, periodSeconds: 3, amount: 0.2, stagger: false },
   radialPulse: { enabled: false, periodSeconds: 3, amount: 40, stagger: false },
+  wave: { enabled: false, periodSeconds: 4, amount: 40, frequency: 3, direction: "cw", stagger: false },
 };
 const layer = (effects?: Partial<LayerEffects>, scale = 1): Layer => ({
   id: "L1",
@@ -62,6 +63,7 @@ describe("effects: CSS emission", () => {
     expect(css).not.toContain("-composite-spin");
     expect(css).not.toContain("-pulse");
     expect(css).not.toContain("-radial");
+    expect(css).not.toContain("-wave");
   });
 
   it("maps cw->normal and ccw->reverse", () => {
@@ -82,6 +84,28 @@ describe("effects: CSS emission", () => {
     expect(css).toContain(".motion-L1-composite {");
     expect(css).toContain("@keyframes motion-L1-composite-spin");
   });
+
+  it("scale and radial pulse oscillate around the base value", () => {
+    const css = effectsCss(layer({
+      scalePulse: { ...allOff.scalePulse, enabled: true, amount: 0.5, periodSeconds: 4 },
+      radialPulse: { ...allOff.radialPulse, enabled: true, amount: 60, periodSeconds: 8 },
+    }), true);
+    expect(css).toContain("animation: motion-L1-pulse 4s");
+    expect(css).toContain("transform: scale(1.5)");
+    expect(css).toContain("transform: scale(0.5)");
+    expect(css).toContain("animation: motion-L1-radial 8s");
+    // Radiate = a clean outward bloom and return (no inward half, no rest-point stutter).
+    expect(css).toContain("translateX(var(--radial-amt, 0px))");
+    expect(css).not.toContain("translateX(calc(var(--radial-amt, 0px) * -1))");
+  });
+
+  it("emits tangent wave keyframes and direction", () => {
+    const css = effectsCss(layer({ wave: { ...allOff.wave, enabled: true, direction: "ccw" } }), true);
+    expect(css).toContain(".instance-wave-wrapper");
+    expect(css).toContain("@keyframes motion-L1-wave");
+    expect(css).toContain("translateY(var(--wave-amt, 0px))");
+    expect(css).toContain("animation-direction: reverse");
+  });
 });
 
 describe("effects: per-copy vars", () => {
@@ -97,6 +121,12 @@ describe("effects: per-copy vars", () => {
     const l = layer({ radialPulse: { ...allOff.radialPulse, enabled: true, amount: 60 } }, 2);
     expect(instanceEffectStyle(l, 0)!["--radial-amt" as never]).toBe("30px");
   });
+
+  it("wave vars include tangent amount and a frequency-based phase delay", () => {
+    const l = layer({ wave: { ...allOff.wave, enabled: true, periodSeconds: 8, amount: 80, frequency: 2 } }, 2);
+    expect(instanceEffectStyle(l, 0)!["--wave-amt" as never]).toBe("40px");
+    expect(instanceEffectStyle(l, 2)!["--wave-delay" as never]).toBe("-4s");
+  });
 });
 
 describe("effects: reach padding", () => {
@@ -106,7 +136,8 @@ describe("effects: reach padding", () => {
     const l = layer({
       scalePulse: { ...allOff.scalePulse, enabled: true, amount: 0.5 },
       radialPulse: { ...allOff.radialPulse, enabled: true, amount: 40 },
+      wave: { ...allOff.wave, enabled: true, amount: 12 },
     });
-    expect(effectsReachPadding(l)).toBeCloseTo(0.5 * Math.hypot(10, 10) * 0.5 + 40, 3);
+    expect(effectsReachPadding(l)).toBeCloseTo(0.5 * Math.hypot(10, 10) * 0.5 + 40 + 12, 3);
   });
 });

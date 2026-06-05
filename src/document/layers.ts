@@ -60,6 +60,9 @@ function cloneEffects(effects: LayerEffects | undefined): LayerEffects | undefin
     compositeSpin: { ...effects.compositeSpin },
     scalePulse: { ...effects.scalePulse },
     radialPulse: { ...effects.radialPulse },
+    wave: effects.wave
+      ? { ...effects.wave }
+      : { enabled: false, periodSeconds: 4, amount: 40, frequency: 3, direction: "cw", stagger: false },
   };
 }
 

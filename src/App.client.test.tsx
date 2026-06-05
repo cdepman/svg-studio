@@ -143,7 +143,7 @@ describe("App layer interactions", () => {
     expect(canvas().querySelector(".motion-path-line")).toBeTruthy();
     expect(container.textContent).toContain("Duration");
 
-    click(button("Preview"));
+    click(button("Play"));
     const style = canvas().querySelector("style")?.textContent ?? "";
     expect(style).toContain("@keyframes");
     expect(style).toContain("animation-play-state: running");

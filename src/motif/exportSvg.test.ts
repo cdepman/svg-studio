@@ -142,7 +142,8 @@ describe("buildExportSvg (PRD §14)", () => {
         individualSpin: { enabled: true, periodSeconds: 6, direction: "ccw", stagger: true },
         compositeSpin: { enabled: true, periodSeconds: 12, direction: "cw" },
         scalePulse: { enabled: false, periodSeconds: 3, amount: 0.2, stagger: false },
-        radialPulse: { enabled: false, periodSeconds: 3, amount: 40, stagger: false },
+        radialPulse: { enabled: true, periodSeconds: 3, amount: 40, stagger: false },
+        wave: { enabled: true, periodSeconds: 4, amount: 35, frequency: 4, direction: "cw", stagger: true },
       },
     });
     const svg = buildAnimatedExportSvg([a]);
@@ -150,6 +151,14 @@ describe("buildExportSvg (PRD §14)", () => {
     expect(svg).toContain("@keyframes motion-a-spin");
     expect(svg).toContain("--spin-delay");
     expect(svg).toContain("animation-direction: reverse"); // ccw spin
+    // radial pulse: the wrapper must sit INSIDE motion-a so the `.motion-a
+    // .instance-radial-wrapper` descendant selector matches.
+    expect(svg).toContain("@keyframes motion-a-radial");
+    // In the body markup the motion-wrapper must wrap the radial wrapper.
+    expect(svg.indexOf("motion-wrapper motion-a")).toBeLessThan(svg.lastIndexOf("instance-radial-wrapper"));
+    expect(svg.indexOf("instance-radial-wrapper")).toBeLessThan(svg.lastIndexOf("instance-wave-wrapper"));
+    expect(svg).toContain("@keyframes motion-a-wave");
+    expect(svg).toContain("--wave-delay");
     // composite spin marks repeat-root and emits its keyframes
     expect(svg).toContain("repeat-root composite-spin motion-a-composite");
     expect(svg).toContain("@keyframes motion-a-composite-spin");

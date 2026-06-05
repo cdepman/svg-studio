@@ -67,10 +67,13 @@ describe("duplicateLayer", () => {
       compositeSpin: { enabled: false, periodSeconds: 12, direction: "cw" },
       scalePulse: { enabled: true, periodSeconds: 3, amount: 0.2, stagger: false },
       radialPulse: { enabled: false, periodSeconds: 3, amount: 40, stagger: false },
+      wave: { enabled: true, periodSeconds: 4, amount: 32, frequency: 3, direction: "cw", stagger: true },
     };
     const dup = duplicateLayer(a);
     dup.effects!.scalePulse.amount = 0.9;
+    dup.effects!.wave.amount = 80;
     expect(a.effects!.scalePulse.amount).toBe(0.2);
+    expect(a.effects!.wave.amount).toBe(32);
     expect(dup.effects!.individualSpin.enabled).toBe(true);
   });
 });

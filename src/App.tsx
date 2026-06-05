@@ -44,7 +44,7 @@ import {
   referenceInstancePoint,
   translateCenterPathAnimation,
 } from "./motion/centerPath";
-import { effectsStyles } from "./motion/effects";
+import { anyEffectEnabled, effectsStyles } from "./motion/effects";
 import {
   createLayer,
   createLayerGroup,
@@ -162,7 +162,15 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [drawingMotionPath, setDrawingMotionPath] = useState(false);
   const [timelineCollapsed, setTimelineCollapsed] = useState(false);
-  const [animationPlaying, setAnimationPlaying] = useState(false);
+  // Which composites (layers) are currently playing — each plays independently.
+  const [playingIds, setPlayingIds] = useState<Set<string>>(new Set());
+  const anyPlaying = playingIds.size > 0;
+  const toggleLayerPlaying = (id: string) =>
+    setPlayingIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   const [tool, setTool] = useState<"select" | "pencil">("select");
   const [pencil, setPencil] = useState<PencilSettings>(DEFAULT_PENCIL);
   // Current fill: the default for new shapes (no selection), or the selected
@@ -222,11 +230,11 @@ export default function App() {
   const canUngroupSelection = groups.some((g) => g.layerIds.some((id) => selectedSet.has(id)));
   const motionCss = useMemo(
     () => {
-      const playing = animationPlaying && !dragging;
+      const isPlaying = (l: Layer) => playingIds.has(l.id) && !dragging;
       const visible = layers.filter((l) => l.visible);
-      return [centerPathStyles(visible, playing), effectsStyles(visible, playing)].filter(Boolean).join("\n");
+      return [centerPathStyles(visible, isPlaying), effectsStyles(visible, isPlaying)].filter(Boolean).join("\n");
     },
-    [layers, animationPlaying, dragging]
+    [layers, playingIds, dragging]
   );
   const primaryMotionPath = useMemo(() => {
     if (!primary?.animation || primary.animation.type !== "centerPath") return null;
@@ -702,13 +710,18 @@ export default function App() {
       compositeSpin: { enabled: false, periodSeconds: 12, direction: "cw" },
       scalePulse: { enabled: false, periodSeconds: 3, amount: 0.2, stagger: false },
       radialPulse: { enabled: false, periodSeconds: 3, amount: 40, stagger: false },
+      wave: { enabled: false, periodSeconds: 4, amount: 40, frequency: 3, direction: "cw", stagger: false },
     };
   }
   // Apply a patch to every editable-selected layer's effects (seeding defaults).
   function updateEffects(patch: (e: LayerEffects) => LayerEffects) {
     const ids = editableIdsRef.current;
     updateLayers((ls) =>
-      ls.map((l) => (ids.has(l.id) ? { ...l, effects: patch(l.effects ?? createEffects()), updatedAt: Date.now() } : l))
+      ls.map((l) =>
+        ids.has(l.id)
+          ? { ...l, effects: patch({ ...createEffects(), ...(l.effects ?? {}) }), updatedAt: Date.now() }
+          : l
+      )
     );
   }
 
@@ -716,7 +729,7 @@ export default function App() {
   // belongs to Arrange, part edit to Design; neither should leak across.
   const switchMode = (m: EditorMode) => {
     if (m !== "animate") {
-      setAnimationPlaying(false);
+      setPlayingIds(new Set());
       setDrawingMotionPath(false);
     }
     setComponentEdit(null);
@@ -1151,7 +1164,7 @@ export default function App() {
   }, [layers]);
 
   useEffect(() => {
-    if (!animationPlaying) return;
+    if (!anyPlaying) return;
     let raf = 0;
     let start = performance.now() - playTime * 1000;
     const tick = (now: number) => {
@@ -1165,7 +1178,7 @@ export default function App() {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [animationPlaying, animTotal, loop]);
+  }, [anyPlaying, animTotal, loop]);
 
   function zoomBy(factor: number) {
     const svg = scene.svgRef.current;
@@ -1367,7 +1380,7 @@ export default function App() {
             motionPath={mode === "animate" ? primaryMotionPath : null}
             drawingMotionPath={mode === "animate" && drawingMotionPath}
             motionAnchor={mode === "animate" ? motionAnchor : null}
-            animationsMoving={animationPlaying && mode === "animate" && !dragging && tool !== "pencil"}
+            animationsMoving={anyPlaying && mode === "animate" && !dragging && tool !== "pencil"}
             tool={tool}
             pencil={pencil}
             fillColor={fillColor}
@@ -1425,9 +1438,9 @@ export default function App() {
           onToggleLocked={() => primaryId && onToggleLocked(primaryId)}
           animationEditable={animationEditable}
           drawingMotionPath={drawingMotionPath}
-          animationPlaying={animationPlaying}
+          animationPlaying={primaryId ? playingIds.has(primaryId) : false}
           onBeginAnimateCenter={beginAnimateCenter}
-          onTogglePlayback={() => setAnimationPlaying((p) => !p)}
+          onTogglePlayback={() => { if (primaryId) toggleLayerPlaying(primaryId); }}
           onDeleteAnimation={deletePrimaryAnimation}
           onUpdateAnimation={updatePrimaryAnimation}
           onUpdateEffects={updateEffects}
@@ -1442,12 +1455,18 @@ export default function App() {
           layers={layers}
           total={animTotal}
           playTime={playTime}
-          playing={animationPlaying}
+          playing={anyPlaying}
+          playingIds={playingIds}
           loop={loop}
           collapsed={timelineCollapsed}
           selectedId={primaryId}
-          onTogglePlay={() => setAnimationPlaying((p) => !p)}
-          onToStart={() => { setAnimationPlaying(false); setPlayTime(0); }}
+          onTogglePlay={() => {
+            // Transport plays/pauses every composite at once.
+            const animated = layers.filter((l) => l.animation?.enabled || anyEffectEnabled(l.effects)).map((l) => l.id);
+            setPlayingIds(anyPlaying ? new Set() : new Set(animated));
+          }}
+          onToggleLayerPlay={toggleLayerPlaying}
+          onToStart={() => { setPlayingIds(new Set()); setPlayTime(0); }}
           onToggleLoop={() => setLoop((l) => !l)}
           onToggleCollapse={() => setTimelineCollapsed((c) => !c)}
           onScrub={(t) => setPlayTime(t)}

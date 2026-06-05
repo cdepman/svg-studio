@@ -166,11 +166,21 @@ export interface RadialPulseEffect {
   amount: number;
   stagger: boolean;
 }
+/** Copies ripple perpendicular to their spoke, like a travelling wave around the ring. */
+export interface WaveEffect {
+  enabled: boolean;
+  periodSeconds: number;
+  amount: number;
+  frequency: number;
+  direction: EffectDirection;
+  stagger: boolean;
+}
 export interface LayerEffects {
   individualSpin: IndividualSpinEffect;
   compositeSpin: CompositeSpinEffect;
   scalePulse: ScalePulseEffect;
   radialPulse: RadialPulseEffect;
+  wave: WaveEffect;
 }
 
 export interface LayerGroup {

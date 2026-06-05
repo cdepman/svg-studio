@@ -12,7 +12,11 @@ import type { Layer, LayerEffects, RepeatParams } from "../types";
 export function anyEffectEnabled(e?: LayerEffects): boolean {
   return (
     !!e &&
-    (e.individualSpin.enabled || e.compositeSpin.enabled || e.scalePulse.enabled || e.radialPulse.enabled)
+    (e.individualSpin.enabled ||
+      e.compositeSpin.enabled ||
+      e.scalePulse.enabled ||
+      e.radialPulse.enabled ||
+      !!e.wave?.enabled)
   );
 }
 
@@ -30,6 +34,24 @@ function staggerDelay(stagger: boolean, periodSeconds: number, count: number, i:
   return -((i % count) / count) * periodSeconds;
 }
 
+const GOLDEN_ANGLE = 2.399963229728653;
+
+/** Phase a travelling wave around the ring. Frequency is cycles around the full circle;
+ *  the optional golden-angle offset makes per-copy motion feel organic instead of locked. */
+function waveDelay(
+  periodSeconds: number,
+  count: number,
+  i: number,
+  frequency: number,
+  stagger: boolean
+): number {
+  if (count <= 0) return 0;
+  const ringPhase = ((i % count) / count) * Math.max(0, frequency);
+  const organicPhase = stagger ? (i * GOLDEN_ANGLE) / (Math.PI * 2) : 0;
+  const phase = ((ringPhase + organicPhase) % 1 + 1) % 1;
+  return -phase * periodSeconds;
+}
+
 /** Extra world-px reach the effects add, so seam/tuck and export bounds cover the
  *  animated extremes. Spin rotates a copy about its own center → no extra reach. */
 export function effectsReachPaddingForGeometry(
@@ -41,7 +63,8 @@ export function effectsReachPaddingForGeometry(
   const halfDiag = 0.5 * Math.hypot(motifBox.width, motifBox.height) * maxAbsScale(params);
   const pulse = effects.scalePulse.enabled ? effects.scalePulse.amount * halfDiag : 0;
   const radial = effects.radialPulse.enabled ? effects.radialPulse.amount : 0;
-  return pulse + radial;
+  const wave = effects.wave?.enabled ? effects.wave.amount : 0;
+  return pulse + radial + wave;
 }
 
 export function effectsReachPadding(layer: Layer): number {
@@ -64,6 +87,11 @@ function effectVars(layer: Layer, i: number): Record<string, string> | null {
     vars["--radial-delay"] = `${num(staggerDelay(e.radialPulse.stagger, e.radialPulse.periodSeconds, count, i))}s`;
     // The radial wrapper lives inside repeat-scale(layer.scale), so divide to read as world px.
     vars["--radial-amt"] = `${num(e.radialPulse.amount / (layer.scale || 1))}px`;
+  }
+  if (e.wave?.enabled) {
+    vars["--wave-delay"] = `${num(waveDelay(e.wave.periodSeconds, count, i, e.wave.frequency, e.wave.stagger))}s`;
+    // The wave wrapper lives inside repeat-scale(layer.scale), so divide to read as world px.
+    vars["--wave-amt"] = `${num(e.wave.amount / (layer.scale || 1))}px`;
   }
   return vars;
 }
@@ -112,28 +140,52 @@ export function effectsCss(layer: Layer, playing: boolean): string {
   }
 
   if (e.scalePulse.enabled) {
-    // alternate => out + back; halve the duration so periodSeconds is one full breath.
-    const dur = Math.max(0.01, e.scalePulse.periodSeconds / 2);
+    const dur = Math.max(0.01, e.scalePulse.periodSeconds);
+    const trough = Math.max(0.01, 1 - e.scalePulse.amount);
     const peak = 1 + e.scalePulse.amount;
     out.push(`.${klass} .instance-pulse-wrapper {
-  animation: ${klass}-pulse ${num(dur)}s ease-in-out var(--pulse-delay, 0s) infinite alternate;
+  animation: ${klass}-pulse ${num(dur)}s ease-in-out var(--pulse-delay, 0s) infinite;
   animation-play-state: ${playState(playing)};
 }
-@keyframes ${klass}-pulse { from { transform: scale(1); } to { transform: scale(${num(peak)}); } }`);
+@keyframes ${klass}-pulse {
+  0%, 100% { transform: scale(1); }
+  25% { transform: scale(${num(peak)}); }
+  50% { transform: scale(1); }
+  75% { transform: scale(${num(trough)}); }
+}`);
   }
 
   if (e.radialPulse.enabled) {
-    const dur = Math.max(0.01, e.radialPulse.periodSeconds / 2);
+    const dur = Math.max(0.01, e.radialPulse.periodSeconds);
     out.push(`.${klass} .instance-radial-wrapper {
-  animation: ${klass}-radial ${num(dur)}s ease-in-out var(--radial-delay, 0s) infinite alternate;
+  animation: ${klass}-radial ${num(dur)}s ease-in-out var(--radial-delay, 0s) infinite;
   animation-play-state: ${playState(playing)};
 }
-@keyframes ${klass}-radial { from { transform: translateX(0); } to { transform: translateX(var(--radial-amt, 0px)); } }`);
+@keyframes ${klass}-radial {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(var(--radial-amt, 0px)); }
+}`);
+  }
+
+  if (e.wave?.enabled) {
+    const dur = Math.max(0.01, e.wave.periodSeconds);
+    out.push(`.${klass} .instance-wave-wrapper {
+  animation: ${klass}-wave ${num(dur)}s ease-in-out var(--wave-delay, 0s) infinite;
+  animation-direction: ${spinDir(e.wave.direction)};
+  animation-play-state: ${playState(playing)};
+}
+@keyframes ${klass}-wave {
+  0%, 100% { transform: translateY(0); }
+  25% { transform: translateY(var(--wave-amt, 0px)); }
+  50% { transform: translateY(0); }
+  75% { transform: translateY(calc(var(--wave-amt, 0px) * -1)); }
+}`);
   }
 
   return out.join("\n");
 }
 
-export function effectsStyles(layers: Layer[], playing: boolean): string {
-  return layers.map((l) => effectsCss(l, playing)).filter(Boolean).join("\n");
+export function effectsStyles(layers: Layer[], playing: boolean | ((layer: Layer) => boolean)): string {
+  const isPlaying = typeof playing === "function" ? playing : () => playing;
+  return layers.map((l) => effectsCss(l, isPlaying(l))).filter(Boolean).join("\n");
 }
