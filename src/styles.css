@@ -182,11 +182,15 @@
   /* on-canvas sub-part edit overlay — mirrors the composite/component gizmo.
      Hit-areas are invisible (click to select); only the selected part draws the
      frame + handles + knob, all screen-sized so they're easy to grab. */
-  .part-hit { fill: transparent; cursor: move; }
-  .part-hit:hover { fill: color-mix(in oklch, var(--mode) 7%, transparent); }
+  .part-marquee-surface { fill: transparent; stroke: none; pointer-events: all; cursor: crosshair; }
+  .part-marquee { fill: var(--mode-weak); stroke: var(--mode); stroke-width: 1; stroke-dasharray: 4 3;
+    vector-effect: non-scaling-stroke; pointer-events: none; }
+  .part-hit-shape { opacity: 0.001; cursor: move; }
+  .part-hit-shape, .part-hit-shape * { pointer-events: painted; }
   .part-ghost { opacity: 0.65; pointer-events: none; }
   .part-frame { fill: none; stroke: var(--mode); stroke-width: 1.5; stroke-dasharray: 6 4;
     vector-effect: non-scaling-stroke; pointer-events: none; }
+  .part-group-frame { pointer-events: all; cursor: move; }
   .part-handle { fill: #fff; stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
   .part-rotate { cursor: grab; }
   .part-rotate-line { stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
@@ -500,6 +504,7 @@
   .canvas-area.tool-pencil .canvas-svg,
   .canvas-area.tool-pencil .layers-root .layer { cursor: crosshair; }
   .layers-root .layer { cursor: move; }
+  .instance-hit { fill: transparent; stroke: none; pointer-events: all; }
 
   .gizmo-frame { stroke: var(--mode); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
   .selection-box { fill: none; stroke: color-mix(in oklch, var(--mode) 60%, transparent); stroke-width: 1;

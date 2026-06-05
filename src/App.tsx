@@ -27,6 +27,7 @@ import {
   reorderParts,
   setPartFill,
   setPartTransform,
+  setPartTransforms,
   setPartVisible,
   singlePart,
 } from "./motif/parts";
@@ -179,12 +180,11 @@ export default function App() {
   // The individual component being edited (double-click a copy). Its layer is
   // the sole selection while editing.
   const [componentEdit, setComponentEdit] = useState<{ layerId: string; index: number } | null>(null);
-  // The motif sub-part being edited (select a row in the layer tree). Edits the
-  // shared motif, so it changes that piece across every copy in the ring.
-  // partId null = the layer is in part-edit mode (parts are clickable) but none
-  // is selected yet; set = that specific sub-part is selected for move/rotate.
+  // The motif sub-parts being edited (select rows or marquee on the canvas).
+  // Edits the shared motif, so each selected piece changes across every copy.
+  // partIds empty = the layer is in part-edit mode but none are selected yet.
   // index = which copy the overlay is shown on (edits sync to all copies).
-  const [partEdit, setPartEdit] = useState<{ layerId: string; partId: string | null; index: number } | null>(null);
+  const [partEdit, setPartEdit] = useState<{ layerId: string; partIds: string[]; index: number } | null>(null);
   const [mode, setMode] = useState<EditorMode>("design");
   const [designView, setDesignView] = useState<DesignView>("context");
   const [openMenu, setOpenMenu] = useState<"file" | "export" | null>(null);
@@ -291,8 +291,8 @@ export default function App() {
   const editableIdsRef = useRef<Set<string>>(new Set());
   editableIdsRef.current = new Set(editableSelected.map((l) => l.id));
 
-  const docRef = useRef({ layers, groups, selectedIds, primaryId, dragging, tool, componentEdit, partEdit });
-  docRef.current = { layers, groups, selectedIds, primaryId, dragging, tool, componentEdit, partEdit };
+  const docRef = useRef({ layers, groups, selectedIds, primaryId, dragging, tool, componentEdit, partEdit, mode });
+  docRef.current = { layers, groups, selectedIds, primaryId, dragging, tool, componentEdit, partEdit, mode };
 
   const commitDocument = (update: (doc: DocumentState) => DocumentState) => {
     setHistory((h) => {
@@ -375,6 +375,24 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Design mode IS the motif editor, so keep the active motif's part-edit overlay
+  // mounted (with an empty selection) whenever we're in Design with the Select
+  // tool. That makes the sub-parts directly clickable AND marquee-selectable
+  // without first "drilling in" — drag a box over the motif and every part it
+  // touches gets selected. Pencil (which authors new layers) and the other modes
+  // don't edit parts, so the overlay is cleared there.
+  useEffect(() => {
+    if (mode === "design" && tool === "select" && primary && (primary.motif.parts?.length ?? 0) >= 1) {
+      if (!partEdit || partEdit.layerId !== primary.id) {
+        setComponentEdit(null);
+        setPartEdit({ layerId: primary.id, partIds: [], index: 0 });
+      }
+    } else if (partEdit && mode === "design" && tool !== "select") {
+      // Switching to the Pencil (which authors new layers) drops part editing.
+      setPartEdit(null);
+    }
+  }, [mode, tool, primary, partEdit]);
 
   // Stop the browser from page-zooming on a trackpad pinch (ctrl+wheel) or
   // Safari gesture events, app-wide. Non-ctrl wheel (e.g. inspector scroll) is
@@ -553,7 +571,10 @@ export default function App() {
 
   // --- Motif sub-part edit ---
   const partLayer = partEdit ? layers.find((l) => l.id === partEdit.layerId) ?? null : null;
-  const editedPart = partLayer && partEdit?.partId ? partLayer.motif.parts?.find((p) => p.id === partEdit.partId) ?? null : null;
+  const editedPart =
+    partLayer && partEdit?.partIds.length === 1
+      ? partLayer.motif.parts?.find((p) => p.id === partEdit.partIds[0]) ?? null
+      : null;
 
   // --- Color ---
   // The swatch reflects the edited part, else the edited component, else the
@@ -570,10 +591,20 @@ export default function App() {
     // shapes inherit — so it carries forward even when it was applied to an
     // existing part, component or layer.
     setFillColor(color);
-    if (partEdit?.partId) {
-      const pid = partEdit.partId;
+    if (partEdit?.partIds.length) {
+      const ids = new Set(partEdit.partIds);
       updateLayers((ls) =>
-        ls.map((l) => (l.id === partEdit.layerId ? { ...l, motif: setPartFill(l.motif, pid, color), updatedAt: Date.now() } : l))
+        ls.map((l) =>
+          l.id === partEdit.layerId
+            ? {
+                ...l,
+                motif: l.motif.parts
+                  ? l.motif.parts.reduce((m, part) => (ids.has(part.id) ? setPartFill(m, part.id, color) : m), l.motif)
+                  : l.motif,
+                updatedAt: Date.now(),
+              }
+            : l
+        )
       );
       return;
     }
@@ -1009,16 +1040,32 @@ export default function App() {
     if (!l || l.locked || (l.motif.parts?.length ?? 0) < 1) return;
     setComponentEdit(null);
     updateSelection([layerId]);
-    setPartEdit({ layerId, partId: null, index });
+    setPartEdit({ layerId, partIds: [], index });
   };
   // Select a motif sub-part for editing (color/move/rotate). Selects its layer
   // and clears any component edit so the two edit modes stay exclusive.
-  const onSelectPart = (layerId: string, partId: string) => {
+  const onSelectPart = (layerId: string, partId: string, index = 0, additive = false) => {
     const l = docRef.current.layers.find((x) => x.id === layerId);
     if (!l || l.locked) return;
     setComponentEdit(null);
     updateSelection([layerId]);
-    setPartEdit((prev) => ({ layerId, partId, index: prev && prev.layerId === layerId ? prev.index : 0 }));
+    setPartEdit((prev) => {
+      if (!additive || prev?.layerId !== layerId) return { layerId, partIds: [partId], index };
+      const next = prev.partIds.includes(partId) ? prev.partIds.filter((id) => id !== partId) : [...prev.partIds, partId];
+      return { layerId, partIds: next, index };
+    });
+  };
+  const onSelectParts = (layerId: string, partIds: string[], index = 0, additive = false) => {
+    const l = docRef.current.layers.find((x) => x.id === layerId);
+    if (!l || l.locked) return;
+    setComponentEdit(null);
+    updateSelection([layerId]);
+    setPartEdit((prev) => {
+      if (!additive || prev?.layerId !== layerId) return { layerId, partIds, index };
+      const next = new Set(prev.partIds);
+      partIds.forEach((partId) => next.add(partId));
+      return { layerId, partIds: Array.from(next), index };
+    });
   };
   const onReorderPart = (layerId: string, draggedId: string, targetId: string) => {
     updateLayers((ls) =>
@@ -1030,13 +1077,18 @@ export default function App() {
       updateLayer(ls, layerId, (l) => ({ ...l, motif: setPartTransform(l.motif, partId, transform), updatedAt: Date.now() }))
     );
   };
+  const onSetPartTransforms = (layerId: string, transforms: Record<string, PartTransform>) => {
+    updateLayers((ls) =>
+      updateLayer(ls, layerId, (l) => ({ ...l, motif: setPartTransforms(l.motif, transforms), updatedAt: Date.now() }))
+    );
+  };
   // Alt-drag a part to copy it: the copy takes the gesture's transform; select it.
   const onDuplicatePart = (layerId: string, partId: string, transform: PartTransform) => {
     const newId = newPartId();
     updateLayers((ls) =>
       updateLayer(ls, layerId, (l) => ({ ...l, motif: duplicatePart(l.motif, partId, newId, transform), updatedAt: Date.now() }))
     );
-    setPartEdit((prev) => ({ layerId, partId: newId, index: prev?.layerId === layerId ? prev.index : 0 }));
+    setPartEdit((prev) => ({ layerId, partIds: [newId], index: prev?.layerId === layerId ? prev.index : 0 }));
   };
   const onMove = (id: string, dir: MoveDir) => {
     updateLayers((ls) => {
@@ -1089,7 +1141,10 @@ export default function App() {
 
       if (typing) return;
       if (e.key === "Escape" && docRef.current.partEdit) {
-        setPartEdit(null);
+        // In Design the overlay is always present, so Escape just clears the
+        // current part selection; elsewhere it fully exits part editing.
+        if (docRef.current.mode === "design") setPartEdit((p) => (p && p.partIds.length ? { ...p, partIds: [] } : p));
+        else setPartEdit(null);
         return;
       }
       if (e.key === "Escape" && docRef.current.componentEdit) {
@@ -1345,8 +1400,10 @@ export default function App() {
             </div>
           )}
 
-          {/* floating contextual toolbar */}
-          {primary && tool === "select" && !componentEdit && !partEdit && (
+          {/* floating contextual toolbar. In Design the part overlay is always
+              mounted, so gate on an ACTIVE part selection (not its mere presence)
+              — the layer actions stay available until you actually grab a part. */}
+          {primary && tool === "select" && !componentEdit && !partEdit?.partIds.length && (
             <div className="ctx-toolbar">
               <span className="ctx-label">
                 <span className="ctx-swatch" /> <b>{selectedIds.length > 1 ? `${selectedIds.length} layers` : primary.name}</b>
@@ -1371,10 +1428,12 @@ export default function App() {
             onComponentExit={exitComponentEdit}
             onCommitComponent={onCommitAbsolute}
             partEdit={partEdit}
-            onEnterPartMode={enterPartMode}
-            onSelectPart={onSelectPart}
-            onCommitPartTransform={onSetPartTransform}
-            onDuplicatePart={onDuplicatePart}
+          onEnterPartMode={enterPartMode}
+          onSelectPart={onSelectPart}
+          onSelectParts={onSelectParts}
+          onCommitPartTransform={onSetPartTransform}
+          onCommitPartTransforms={onSetPartTransforms}
+          onDuplicatePart={onDuplicatePart}
             onExitPart={() => setPartEdit(null)}
             motionCss={motionCss}
             motionPath={mode === "animate" ? primaryMotionPath : null}
@@ -1411,8 +1470,10 @@ export default function App() {
               ? <>{Icon.pen({ size: 14 })} Draw the path each copy follows · relative to the center</>
               : tool === "pencil"
               ? <>{Icon.pen({ size: 14 })} Draw a shape · multiple strokes compose one motif</>
-              : partEdit
-              ? <>{Icon.cursor({ size: 14 })} Editing parts · click a piece · drag to move · knob to rotate · Esc to back out</>
+              : partEdit?.partIds.length
+              ? <>{Icon.cursor({ size: 14 })} Editing parts · drag to move · corners resize · knob to rotate · Esc to deselect</>
+              : mode === "design"
+              ? <>{Icon.cursor({ size: 14 })} Click a part to edit it · drag a box to select several · double-click empty to clear</>
               : componentEdit
               ? <>{Icon.cursor({ size: 14 })} Editing one copy · drag to move · corners resize · knob rotates · double-click for its parts · Esc to exit</>
               : <>{Icon.cursor({ size: 14 })} Grab artwork to move · double-click to edit a single copy · drag empty canvas to marquee</>}

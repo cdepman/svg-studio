@@ -14,7 +14,7 @@ import { smoothPathD } from "../motion/centerPath";
 import type { Scene } from "./useScene";
 import type { GBounds } from "./selectionBounds";
 import type { WorldRect } from "../App";
-import type { Center, DesignView, Layer, PartTransform, RepeatParams, Viewport } from "../types";
+import type { Center, DesignView, Layer, MotifPart, PartTransform, RepeatParams, Viewport } from "../types";
 
 const CORNERS = ["tl", "tr", "bl", "br"] as const;
 const CORNER_CURSOR: Record<string, string> = {
@@ -41,10 +41,12 @@ interface CanvasProps {
   onComponentExit: () => void;
   onCommitComponent: (partial: Partial<RepeatParams>) => void;
   /** Sub-part editing: which layer is in part-edit mode + the selected part. */
-  partEdit: { layerId: string; partId: string | null; index: number } | null;
+  partEdit: { layerId: string; partIds: string[]; index: number } | null;
   onEnterPartMode: (layerId: string, index: number) => void;
-  onSelectPart: (layerId: string, partId: string) => void;
+  onSelectPart: (layerId: string, partId: string, index?: number, additive?: boolean) => void;
+  onSelectParts: (layerId: string, partIds: string[], index?: number, additive?: boolean) => void;
   onCommitPartTransform: (layerId: string, partId: string, t: PartTransform) => void;
+  onCommitPartTransforms: (layerId: string, transforms: Record<string, PartTransform>) => void;
   onDuplicatePart: (layerId: string, partId: string, t: PartTransform) => void;
   onExitPart: () => void;
   motionCss: string;
@@ -90,7 +92,9 @@ export function Canvas({
   partEdit,
   onEnterPartMode,
   onSelectPart,
+  onSelectParts,
   onCommitPartTransform,
+  onCommitPartTransforms,
   onDuplicatePart,
   onExitPart,
   motionCss,
@@ -145,6 +149,50 @@ export function Canvas({
     maxX: Math.max(a.x, b.x),
     maxY: Math.max(a.y, b.y),
   });
+
+  const closestFromEvent = (e: React.PointerEvent, selector: string): Element | null => {
+    const targetMatch = (e.target as Element).closest?.(selector);
+    if (targetMatch) return targetMatch;
+    const path = typeof e.nativeEvent.composedPath === "function" ? e.nativeEvent.composedPath() : [];
+    for (const item of path) {
+      if (!(item instanceof Element)) continue;
+      if (item.matches(selector)) return item;
+      const match = item.closest?.(selector);
+      if (match) return match;
+    }
+    return null;
+  };
+
+  const partPoint = (part: MotifPart, p: Center): Center => {
+    const scale = part.transform.scale || 1;
+    const a = (-part.transform.rotation * Math.PI) / 180;
+    const x = p.x - part.transform.tx - part.cx;
+    const y = p.y - part.transform.ty - part.cy;
+    return {
+      x: part.cx + (x * Math.cos(a) - y * Math.sin(a)) / scale,
+      y: part.cy + (x * Math.sin(a) + y * Math.cos(a)) / scale,
+    };
+  };
+
+  const pickPartAt = (layer: Layer, index: number, clientX: number, clientY: number): string | null => {
+    const root = scene.layersRootRef.current;
+    const use = root?.querySelector(
+      `.layer[data-layer-id="${layer.id}"] .instance-placement[data-i="${index}"] use.instance`
+    ) as SVGUseElement | null;
+    const ctm = typeof use?.getScreenCTM === "function" ? use.getScreenCTM() : null;
+    if (!ctm || typeof DOMPoint === "undefined") return null;
+    const local = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+    const motifPoint = { x: local.x + layer.motif.anchorX, y: local.y + layer.motif.anchorY };
+    const parts = (layer.motif.parts ?? []).filter((p) => p.visible);
+    for (let n = parts.length - 1; n >= 0; n--) {
+      const part = parts[n];
+      const p = partPoint(part, motifPoint);
+      const x0 = part.cx - part.w / 2;
+      const y0 = part.cy - part.h / 2;
+      if (p.x >= x0 && p.x <= x0 + part.w && p.y >= y0 && p.y <= y0 + part.h) return part.id;
+    }
+    return null;
+  };
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -322,11 +370,22 @@ export function Canvas({
     // artwork is inert). A double-tap on the artwork drills into the copy under
     // the cursor (component edit) — detected manually, because pointer-capture
     // during a move suppresses the browser's native dblclick.
-    const el = (e.target as Element).closest?.(".layer[data-layer-id]");
+    const el = closestFromEvent(e, ".layer[data-layer-id]");
     const id = el?.getAttribute("data-layer-id");
     if (id) {
       const layer = layers.find((l) => l.id === id);
       if (layer && !layer.locked) {
+        const iEl = closestFromEvent(e, "[data-i]");
+        const i = iEl != null ? parseInt(iEl.getAttribute("data-i") ?? "0", 10) : 0;
+        if (tool === "select" && dblClickTarget === "part" && (layer.motif.parts?.length ?? 0) > 0) {
+          e.preventDefault();
+          const visibleParts = (layer.motif.parts ?? []).filter((p) => p.visible);
+          const fallbackPart = visibleParts[visibleParts.length - 1]?.id;
+          const partId = pickPartAt(layer, i, e.clientX, e.clientY) ?? fallbackPart;
+          if (partId) onSelectPart(id, partId, i, e.shiftKey || e.metaKey || e.ctrlKey);
+          else onEnterPartMode(id, i);
+          return;
+        }
         const now = typeof performance !== "undefined" ? performance.now() : Date.now();
         const last = lastTap.current;
         const isDouble =
@@ -334,8 +393,6 @@ export function Canvas({
         lastTap.current = isDouble ? null : { id, t: now, x: e.clientX, y: e.clientY };
         if (isDouble && tool === "select" && dblClickTarget) {
           e.preventDefault();
-          const iEl = (e.target as Element).closest?.("[data-i]");
-          const i = iEl != null ? parseInt(iEl.getAttribute("data-i") ?? "0", 10) : 0;
           if (dblClickTarget === "part") onEnterPartMode(id, i);
           else onComponentSelect(id, i);
           return;
@@ -557,14 +614,17 @@ export function Canvas({
             return pl ? (
               <PartEditLayer
                 layer={pl}
-                selectedPartId={partEdit.partId}
+                selectedPartIds={partEdit.partIds}
                 index={partEdit.index}
                 scene={scene}
                 inv={inv}
-                onSelectPart={(partId) => onSelectPart(pl.id, partId)}
+                onSelectPart={(partId, additive) => onSelectPart(pl.id, partId, partEdit.index, additive)}
+                onSelectParts={(partIds, additive) => onSelectParts(pl.id, partIds, partEdit.index, additive)}
                 onCommitTransform={(partId, t) => onCommitPartTransform(pl.id, partId, t)}
+                onCommitTransforms={(transforms) => onCommitPartTransforms(pl.id, transforms)}
                 onDuplicatePart={(partId, t) => onDuplicatePart(pl.id, partId, t)}
                 setDragging={setDragging}
+                spaceHeldRef={spaceHeld}
               />
             ) : null;
           })()}

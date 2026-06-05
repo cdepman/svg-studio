@@ -250,6 +250,7 @@ describe("App layer interactions", () => {
   });
 
   it("grabbing a layer's artwork and dragging moves its center", () => {
+    setMode("arrange");
     const centerRoot = () => canvas().querySelector(".layer .layer-center-root")!;
     expect(centerRoot().getAttribute("transform")).toBe("translate(0,0)");
     const art = canvas().querySelector(".layer use.instance")!;

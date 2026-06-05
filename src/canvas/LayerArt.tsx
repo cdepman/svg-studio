@@ -55,6 +55,12 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
     const f = layer.components[i]?.fill;
     return f ? `#${colorDefId.get(f)}` : `#${motifId}`;
   };
+  const hitRect = {
+    x: layer.motif.box.x - layer.motif.anchorX,
+    y: layer.motif.box.y - layer.motif.anchorY,
+    width: layer.motif.box.width,
+    height: layer.motif.box.height,
+  };
 
   // `alt` tags the second (seam-half) pass so the two passes are distinguishable;
   // both carry `instance` so the imperative sweep updates them together. The
@@ -86,6 +92,14 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
                   <g className="instance-pulse-wrapper">
                     <g className="instance-follow-wrapper">
                       <use data-i={i} className={alt ? "instance alt" : "instance"} href={hrefForIndex(i)} />
+                      <rect
+                        data-i={i}
+                        className="instance-hit"
+                        x={hitRect.x}
+                        y={hitRect.y}
+                        width={hitRect.width}
+                        height={hitRect.height}
+                      />
                     </g>
                   </g>
                 </g>

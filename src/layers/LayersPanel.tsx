@@ -27,9 +27,9 @@ interface LayersPanelProps {
   onToggleVisible: (id: string) => void;
   onToggleLocked: (id: string) => void;
   onTogglePart: (layerId: string, partId: string) => void;
-  onSelectPart: (layerId: string, partId: string) => void;
+  onSelectPart: (layerId: string, partId: string, index?: number, additive?: boolean) => void;
   onReorderPart: (layerId: string, draggedId: string, targetId: string) => void;
-  selectedPart: { layerId: string; partId: string | null } | null;
+  selectedPart: { layerId: string; partIds: string[] } | null;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onMove: (id: string, dir: MoveDir) => void;
@@ -91,7 +91,7 @@ function PartRow({
   dragging: boolean;
   draggedPartRef: React.MutableRefObject<{ layerId: string; partId: string } | null>;
   setOverPartId: (id: string | null) => void;
-  onSelectPart: (layerId: string, partId: string) => void;
+  onSelectPart: (layerId: string, partId: string, index?: number, additive?: boolean) => void;
   onTogglePart: (layerId: string, partId: string) => void;
   onReorderPart: (layerId: string, draggedId: string, targetId: string) => void;
 }) {
@@ -100,7 +100,7 @@ function PartRow({
       className={`layer-row part-row${part.visible ? "" : " part-hidden"}${selected ? " is-selected" : ""}${isOver ? " is-drop-target" : ""}`}
       style={{ paddingLeft: 4 + depth * 16 }}
       draggable
-      onPointerDown={(e) => { e.stopPropagation(); onSelectPart(layer.id, part.id); }}
+      onPointerDown={(e) => { e.stopPropagation(); onSelectPart(layer.id, part.id, 0, e.shiftKey || e.metaKey || e.ctrlKey); }}
       onDragStart={(e) => { draggedPartRef.current = { layerId: layer.id, partId: part.id }; e.dataTransfer.effectAllowed = "move"; }}
       onDragOver={(e) => {
         const d = draggedPartRef.current;
@@ -227,7 +227,7 @@ export function LayersPanel({
                   layer={primaryLayer}
                   part={part}
                   depth={0}
-                  selected={selectedPart?.layerId === primaryLayer.id && selectedPart.partId === part.id}
+                  selected={selectedPart?.layerId === primaryLayer.id && selectedPart.partIds.includes(part.id)}
                   isOver={overPartId === part.id}
                   dragging={dragging}
                   draggedPartRef={draggedPart}
@@ -394,7 +394,7 @@ export function LayersPanel({
                   layer={l}
                   part={part}
                   depth={entry.depth + 1}
-                  selected={selectedPart?.layerId === l.id && selectedPart.partId === part.id}
+                  selected={selectedPart?.layerId === l.id && selectedPart.partIds.includes(part.id)}
                   isOver={overPartId === part.id}
                   dragging={dragging}
                   draggedPartRef={draggedPart}

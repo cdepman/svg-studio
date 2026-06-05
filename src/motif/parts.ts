@@ -81,6 +81,14 @@ export function setPartTransform(motif: Motif, partId: string, transform: PartTr
   return updatePart(motif, partId, (p) => ({ ...p, transform }));
 }
 
+export function setPartTransforms(motif: Motif, transforms: Record<string, PartTransform>): Motif {
+  if (!motif.parts) return motif;
+  return motifWithParts(
+    motif,
+    motif.parts.map((p) => (transforms[p.id] ? { ...p, transform: transforms[p.id] } : p))
+  );
+}
+
 /** Copy a part (new id, given transform) inserted just above the original. */
 export function duplicatePart(motif: Motif, partId: string, newId: string, transform?: PartTransform): Motif {
   if (!motif.parts) return motif;

@@ -48,7 +48,9 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       partEdit={null}
       onEnterPartMode={() => {}}
       onSelectPart={() => {}}
+      onSelectParts={() => {}}
       onCommitPartTransform={() => {}}
+      onCommitPartTransforms={() => {}}
       onDuplicatePart={() => {}}
       onExitPart={() => {}}
       motionCss=""
