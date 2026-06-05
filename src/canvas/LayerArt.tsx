@@ -12,6 +12,7 @@ import {
   instanceLocalTransform,
   instanceSpokeTransform,
   instanceTransform,
+  motifCrossesCenter,
   paintOrder,
   seamHalves,
   subsetIndices,
@@ -38,7 +39,11 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
   const seamClipId = `seam-half-${layer.id}`;
 
   const animated = isLayerAnimated(layer);
-  const showTuck = p.tuck && !proxy;
+  // Seam tuck splits the ring into two half-disks; that clip is only valid when
+  // copies stay on their own side of the center. When the motif is big enough to
+  // reach across (small radius / large motif), the pie-sector clip would bite a
+  // chunk out of the ring, so fall back to a single normal pass.
+  const showTuck = p.tuck && !proxy && !motifCrossesCenter(p, layer.motif.box);
   const halves = showTuck
     ? seamHalves(p, layer.motif.box, animationReachPadding(layer) + effectsReachPadding(layer))
     : null;

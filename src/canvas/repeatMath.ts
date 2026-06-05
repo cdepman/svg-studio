@@ -104,6 +104,22 @@ export function boundsReach(p: RepeatParams, box: Box): number {
   return p.radiusOffset + 0.5 * Math.hypot(box.width, box.height) * maxAbsScale(p);
 }
 
+/** How far a copy reaches inward from its placement point (the anchor sits at
+ *  radiusOffset). When this exceeds radiusOffset, copies overlap the layer
+ *  center and reach into the opposite half of the ring. */
+export function motifInnerReach(p: RepeatParams, box: Box): number {
+  return 0.5 * Math.hypot(box.width, box.height) * maxAbsScale(p);
+}
+
+/** The seam-tuck split clips the ring into two complementary half-disks centred
+ *  on the layer center. That's only valid when copies stay on their own side —
+ *  i.e. don't reach past the center. For tightly-packed rings (small radius,
+ *  large motif) the copies cross over, so the pie-sector clip would cut a chunk
+ *  out of the ring; in that case tuck must be skipped (single normal pass). */
+export function motifCrossesCenter(p: RepeatParams, box: Box): boolean {
+  return motifInnerReach(p, box) > p.radiusOffset;
+}
+
 
 function sectorPath(fromDeg: number, toDeg: number, reach: number): string {
   const samples = Math.max(2, Math.ceil(Math.abs(toDeg - fromDeg) / 4));

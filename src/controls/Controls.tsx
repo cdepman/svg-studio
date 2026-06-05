@@ -305,12 +305,11 @@ function DesignInspector(props: ControlsProps) {
         ) : (
           <div className="motif-library">
             {props.motifLibrary.map((item) => (
-              <div key={item.id} className="motif-card">
+              <div key={item.id} className="motif-card" title={item.filename}>
                 <button className="motif-thumb" onClick={() => void props.onApplyLibraryMotif(item)} title={`Use ${item.name}`}>
                   <img src={item.previewUrl} alt="" loading="lazy" />
                 </button>
                 <div className="motif-meta">
-                  <span className="motif-name" title={item.filename}>{item.name}</span>
                   <div className="motif-actions">
                     <button className="mini-btn" onClick={() => void props.onApplyLibraryMotif(item)} disabled={!props.editable}>Use</button>
                     <button className="mini-btn" onClick={() => void props.onAddLibraryMotif(item)}>Add</button>

@@ -7,6 +7,7 @@ import {
   instanceSpokeTransform,
   instanceTransform,
   maxAbsScale,
+  motifCrossesCenter,
   paintOrder,
   seamHalves,
 } from "../canvas/repeatMath";
@@ -55,7 +56,9 @@ function animatedLayerBounds(layer: Layer) {
 function layerMarkup(layer: Layer, animated: boolean): string {
   const { params, center, motif, id } = layer;
   const motifId = `motif-${id}`;
-  const useTuck = params.tuck;
+  // Match LayerArt: skip tuck when copies cross the center (the half-disk clip
+  // would bite a chunk out of the ring).
+  const useTuck = params.tuck && !motifCrossesCenter(params, motif.box);
 
   // Per-component fill: one recolored def per distinct override color, each
   // overriding <use> pointed at its colored source. Mirrors LayerArt.
