@@ -39,6 +39,8 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       selectedIds={selected}
       gizmo={gizmo}
       selectionBoxes={[]}
+      designView={null}
+      dblClickTarget="component"
       componentEdit={null}
       onComponentSelect={() => {}}
       onComponentExit={() => {}}
@@ -47,6 +49,7 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       onEnterPartMode={() => {}}
       onSelectPart={() => {}}
       onCommitPartTransform={() => {}}
+      onDuplicatePart={() => {}}
       onExitPart={() => {}}
       motionCss=""
       motionPath={null}

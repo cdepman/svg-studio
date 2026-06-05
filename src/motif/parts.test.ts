@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { importSvgFromText } from "./importSvg";
 import {
+  duplicatePart,
   partColor,
   reorderParts,
   serializeMotif,
@@ -60,6 +61,19 @@ describe("motif parts", () => {
     expect(out.parts?.[0].transform.rotation).toBe(45);
     expect(out.innerHtml).toContain("rotate(45)");
     expect(out.innerHtml).toContain("translate(5 -3)");
+  });
+
+  it("duplicates a part with a new id + transform, inserted above the original", () => {
+    const motif = importSvgFromText(ring);
+    const srcId = motif.parts![0].id;
+    const out = duplicatePart(motif, srcId, "part-copy", { tx: 10, ty: 5, rotation: 0, scale: 1.5 });
+    expect(out.parts?.length).toBe(4);
+    const copy = out.parts!.find((p) => p.id === "part-copy")!;
+    expect(copy.baseMarkup).toBe(motif.parts![0].baseMarkup); // same geometry
+    expect(copy.transform.scale).toBe(1.5);
+    // inserted right after the original (paint above it)
+    expect(out.parts!.findIndex((p) => p.id === "part-copy")).toBe(1);
+    expect(out.innerHtml).toContain("scale(1.5)");
   });
 
   it("reorders parts (paint order) by id", () => {

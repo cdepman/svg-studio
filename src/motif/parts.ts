@@ -75,6 +75,18 @@ export function setPartTransform(motif: Motif, partId: string, transform: PartTr
   return updatePart(motif, partId, (p) => ({ ...p, transform }));
 }
 
+/** Copy a part (new id, given transform) inserted just above the original. */
+export function duplicatePart(motif: Motif, partId: string, newId: string, transform?: PartTransform): Motif {
+  if (!motif.parts) return motif;
+  const idx = motif.parts.findIndex((p) => p.id === partId);
+  if (idx < 0) return motif;
+  const src = motif.parts[idx];
+  const copy: MotifPart = { ...src, id: newId, transform: transform ?? { ...src.transform } };
+  const parts = motif.parts.slice();
+  parts.splice(idx + 1, 0, copy);
+  return motifWithParts(motif, parts);
+}
+
 /** Reorder a part to sit just before `targetId` (paint order). */
 export function reorderParts(motif: Motif, draggedId: string, targetId: string): Motif {
   if (!motif.parts || draggedId === targetId) return motif;

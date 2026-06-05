@@ -5,11 +5,14 @@ import { useRef, useState } from "react";
 import { Icon } from "../ui/icons";
 import { boundsReach, instanceOpacity, instanceTransform, paintOrder } from "../canvas/repeatMath";
 import { renderPart } from "../motif/parts";
-import type { Layer, LayerGroup, Motif, MotifPart } from "../types";
+import type { EditorMode, Layer, LayerGroup, Motif, MotifPart } from "../types";
 
 export type MoveDir = "front" | "forward" | "backward" | "back";
 
 interface LayersPanelProps {
+  mode: EditorMode;
+  /** The active layer whose motif composition is shown in Design mode. */
+  primaryId: string | null;
   layers: Layer[];
   groups: LayerGroup[];
   selectedIds: Set<string>;
@@ -75,7 +78,64 @@ function PartThumb({ motif, part }: { motif: Motif; part: MotifPart }) {
   );
 }
 
+/** One motif sub-part row: drag to reorder, eye to hide, click to select. */
+function PartRow({
+  layer, part, depth, selected, isOver, dragging, draggedPartRef, setOverPartId,
+  onSelectPart, onTogglePart, onReorderPart,
+}: {
+  layer: Layer;
+  part: MotifPart;
+  depth: number;
+  selected: boolean;
+  isOver: boolean;
+  dragging: boolean;
+  draggedPartRef: React.MutableRefObject<{ layerId: string; partId: string } | null>;
+  setOverPartId: (id: string | null) => void;
+  onSelectPart: (layerId: string, partId: string) => void;
+  onTogglePart: (layerId: string, partId: string) => void;
+  onReorderPart: (layerId: string, draggedId: string, targetId: string) => void;
+}) {
+  return (
+    <div
+      className={`layer-row part-row${part.visible ? "" : " part-hidden"}${selected ? " is-selected" : ""}${isOver ? " is-drop-target" : ""}`}
+      style={{ paddingLeft: 4 + depth * 16 }}
+      draggable
+      onPointerDown={(e) => { e.stopPropagation(); onSelectPart(layer.id, part.id); }}
+      onDragStart={(e) => { draggedPartRef.current = { layerId: layer.id, partId: part.id }; e.dataTransfer.effectAllowed = "move"; }}
+      onDragOver={(e) => {
+        const d = draggedPartRef.current;
+        if (d && d.layerId === layer.id && d.partId !== part.id) { e.preventDefault(); setOverPartId(part.id); }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        const d = draggedPartRef.current;
+        if (d && d.layerId === layer.id && d.partId !== part.id) onReorderPart(layer.id, d.partId, part.id);
+        draggedPartRef.current = null;
+        setOverPartId(null);
+      }}
+      onDragEnd={() => { draggedPartRef.current = null; setOverPartId(null); }}
+    >
+      <span className="lr-grip">{Icon.grip()}</span>
+      <span className="lr-disclosure" />
+      <PartThumb motif={layer.motif} part={part} />
+      <div className="lr-body"><span className="lr-name">{part.name}</span></div>
+      <div className="lr-actions">
+        <button
+          className={`lr-ico${part.visible ? " on" : " is-quiet"}`}
+          disabled={dragging}
+          onPointerDown={(e) => { e.stopPropagation(); onTogglePart(layer.id, part.id); }}
+          title={part.visible ? "Hide part" : "Show part"}
+        >
+          {part.visible ? Icon.eye() : Icon.eyeOff()}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function LayersPanel({
+  mode,
+  primaryId,
   layers,
   groups,
   selectedIds,
@@ -138,6 +198,50 @@ export function LayersPanel({
   const visibleRows = rows.filter((entry) =>
     !q ? true : (entry.kind === "group" ? entry.group.name : entry.layer.name).toLowerCase().includes(q)
   );
+
+  // Design mode: the panel describes the active motif's COMPOSITION — its parts,
+  // reorderable (paint order) with per-part visibility — instead of the layer stack.
+  if (mode === "design") {
+    const primaryLayer = primaryId ? layerById.get(primaryId) ?? null : null;
+    const parts = primaryLayer?.motif.parts ?? [];
+    return (
+      <aside className="layers-panel">
+        <div className="panel-head">
+          <span className="panel-title">Composition</span>
+          <div className="panel-head-spacer" />
+          {primaryLayer && <span className="comp-name">{primaryLayer.name}</span>}
+        </div>
+        <div className="layer-list scroll">
+          {!primaryLayer ? (
+            <div className="empty-note">Select a layer to edit its motif.</div>
+          ) : parts.length === 0 ? (
+            <div className="empty-note">This motif is a single shape. Draw or import multi-part artwork to edit its parts here.</div>
+          ) : (
+            // Top row = front-most (last painted), like the layer stack.
+            parts
+              .slice()
+              .reverse()
+              .map((part) => (
+                <PartRow
+                  key={part.id}
+                  layer={primaryLayer}
+                  part={part}
+                  depth={0}
+                  selected={selectedPart?.layerId === primaryLayer.id && selectedPart.partId === part.id}
+                  isOver={overPartId === part.id}
+                  dragging={dragging}
+                  draggedPartRef={draggedPart}
+                  setOverPartId={setOverPartId}
+                  onSelectPart={onSelectPart}
+                  onTogglePart={onTogglePart}
+                  onReorderPart={onReorderPart}
+                />
+              ))
+          )}
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <aside className="layers-panel">
@@ -284,48 +388,22 @@ export function LayersPanel({
                   </button>
                 </div>
               </div>
-              {hasParts && expanded && parts.map((part) => {
-                const partSelected = selectedPart?.layerId === l.id && selectedPart.partId === part.id;
-                return (
-                  <div
-                    key={part.id}
-                    className={`layer-row part-row${part.visible ? "" : " part-hidden"}${partSelected ? " is-selected" : ""}${overPartId === part.id ? " is-drop-target" : ""}`}
-                    style={{ paddingLeft: 4 + (entry.depth + 1) * 16 }}
-                    draggable
-                    onPointerDown={(e) => { e.stopPropagation(); onSelectPart(l.id, part.id); }}
-                    onDragStart={(e) => { draggedPart.current = { layerId: l.id, partId: part.id }; e.dataTransfer.effectAllowed = "move"; }}
-                    onDragOver={(e) => {
-                      const d = draggedPart.current;
-                      if (d && d.layerId === l.id && d.partId !== part.id) { e.preventDefault(); setOverPartId(part.id); }
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const d = draggedPart.current;
-                      if (d && d.layerId === l.id && d.partId !== part.id) onReorderPart(l.id, d.partId, part.id);
-                      draggedPart.current = null;
-                      setOverPartId(null);
-                    }}
-                    onDragEnd={() => { draggedPart.current = null; setOverPartId(null); }}
-                  >
-                    <span className="lr-grip">{Icon.grip()}</span>
-                    <span className="lr-disclosure" />
-                    <PartThumb motif={l.motif} part={part} />
-                    <div className="lr-body">
-                      <span className="lr-name">{part.name}</span>
-                    </div>
-                    <div className="lr-actions">
-                      <button
-                        className={`lr-ico${part.visible ? " on" : " is-quiet"}`}
-                        disabled={dragging}
-                        onPointerDown={(e) => { e.stopPropagation(); onTogglePart(l.id, part.id); }}
-                        title={part.visible ? "Hide part" : "Show part"}
-                      >
-                        {part.visible ? Icon.eye() : Icon.eyeOff()}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+              {hasParts && expanded && parts.map((part) => (
+                <PartRow
+                  key={part.id}
+                  layer={l}
+                  part={part}
+                  depth={entry.depth + 1}
+                  selected={selectedPart?.layerId === l.id && selectedPart.partId === part.id}
+                  isOver={overPartId === part.id}
+                  dragging={dragging}
+                  draggedPartRef={draggedPart}
+                  setOverPartId={setOverPartId}
+                  onSelectPart={onSelectPart}
+                  onTogglePart={onTogglePart}
+                  onReorderPart={onReorderPart}
+                />
+              ))}
               {menuId === l.id && (
                 <div style={{ position: "absolute", right: 8, top: 36, zIndex: 50 }}>
                   <div className="menu right" onClick={(e) => e.stopPropagation()}>

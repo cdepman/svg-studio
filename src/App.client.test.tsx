@@ -24,8 +24,10 @@ const button = (text: string) =>
   Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.trim() === text);
 const titleBtn = (sub: string) =>
   Array.from(container.querySelectorAll("button")).find((b) => b.getAttribute("title")?.includes(sub));
-const setMode = (m: "design" | "animate") =>
-  click(Array.from(container.querySelectorAll(".mode-btn")).find((b) => b.textContent?.includes(m === "animate" ? "Animate" : "Design")));
+const setMode = (m: "design" | "arrange" | "animate") => {
+  const label = m === "animate" ? "Animate" : m === "arrange" ? "Arrange" : "Design";
+  click(Array.from(container.querySelectorAll(".mode-btn")).find((b) => b.textContent?.includes(label)));
+};
 const newLayer = () => click(container.querySelector('[title="New layer"]'));
 const selectAll = () => keydown("a", { metaKey: true });
 // Enter draw mode and commit a freehand motion path (creates the animation).
@@ -64,12 +66,14 @@ function setRange(input: Element, value: number) {
 
 describe("App layer interactions", () => {
   it("starts with one layer, selected and rendered on canvas", () => {
+    setMode("arrange");
     expect(rows()).toHaveLength(1);
     expect(rows()[0].className).toContain("selected");
     expect(canvasLayerIds()).toHaveLength(1);
   });
 
   it("New Layer adds a second layer and selects it", () => {
+    setMode("arrange");
     newLayer();
     expect(rows()).toHaveLength(2);
     expect(canvasLayerIds()).toHaveLength(2);
@@ -77,6 +81,7 @@ describe("App layer interactions", () => {
   });
 
   it("Duplicate adds a copy and selects the new layer", () => {
+    setMode("arrange");
     click(button("Duplicate"));
     expect(rows()).toHaveLength(2);
     expect(container.textContent).toContain("Radial Repeat 1 copy");
@@ -86,6 +91,7 @@ describe("App layer interactions", () => {
   });
 
   it("Duplicate acts on the whole selection when multiple are selected", () => {
+    setMode("arrange");
     newLayer();
     selectAll();
     click(button("Duplicate"));
@@ -94,6 +100,7 @@ describe("App layer interactions", () => {
   });
 
   it("groups selected layers with the keyboard shortcut", () => {
+    setMode("arrange");
     newLayer();
     selectAll();
     keydown("g", { metaKey: true });
@@ -105,6 +112,7 @@ describe("App layer interactions", () => {
   });
 
   it("Undo / Redo revert and restore document edits", () => {
+    setMode("arrange");
     expect((titleBtn("Undo") as HTMLButtonElement).disabled).toBe(true);
     newLayer();
     expect(rows()).toHaveLength(2);
@@ -116,6 +124,7 @@ describe("App layer interactions", () => {
   });
 
   it("keyboard undo and redo shortcuts use the current document state", () => {
+    setMode("arrange");
     newLayer();
     expect(rows()).toHaveLength(2);
     keydown("z", { metaKey: true });
@@ -145,6 +154,7 @@ describe("App layer interactions", () => {
   });
 
   it("adds an animation to every selected layer at once", () => {
+    setMode("arrange");
     newLayer(); // 2 layers
     selectAll();
     setMode("animate");
@@ -190,6 +200,7 @@ describe("App layer interactions", () => {
   });
 
   it("hiding a layer removes it from the canvas but keeps the panel row", () => {
+    setMode("arrange");
     const beforeId = canvasLayerIds()[0];
     // layer-row icon toggles fire on pointerdown (matches the design)
     act(() => container.querySelector('.layer-row [title="Hide"]')!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
@@ -205,6 +216,7 @@ describe("App layer interactions", () => {
   });
 
   it("Select All highlights every row and draws one union gizmo", () => {
+    setMode("arrange");
     newLayer();
     selectAll();
     expect(Array.from(rows()).every((r) => r.className.includes("selected"))).toBe(true);
@@ -214,6 +226,7 @@ describe("App layer interactions", () => {
   });
 
   it("count edits a single layer, and is disabled (blank) for a multi-selection", () => {
+    setMode("arrange");
     expect(instances()).toHaveLength(12);
     expect(sliderByLabel("Count").disabled).toBe(false);
     setRange(sliderByLabel("Count"), 6);
@@ -246,6 +259,7 @@ describe("App layer interactions", () => {
   });
 
   it("Option + dragging a resize handle duplicates and resizes the copy", () => {
+    setMode("arrange");
     expect(rows()).toHaveLength(1);
     const handle = canvas().querySelector(".gizmo-handle")!;
     act(() => handle.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 0, button: 0, altKey: true })));
@@ -268,17 +282,17 @@ describe("App layer interactions", () => {
     canvas().querySelectorAll(`[data-layer-id]`)[layerIndex]?.querySelectorAll("use.instance:not(.alt)").length;
 
   it("Pencil draws a single-instance drawn layer; extra strokes append to it", () => {
+    // Pencil is a Design tool; assert via the canvas (mode-independent) since the
+    // panel shows the motif Composition in Design, not the layer list.
     click(titleBtn("Pencil"));
     drawStroke([200, 200], [260, 210], [300, 260], [210, 300]);
-    expect(rows()).toHaveLength(2);
+    expect(canvasLayerIds()).toHaveLength(2);
     expect(container.textContent).toContain("Drawn Shape 1");
-    expect(rows()[0].textContent).toContain("Drawn Shape 1");
-    expect(rows()[0].className).toContain("selected");
     const drawnG = canvas().querySelector(".layer[data-layer-id]:last-of-type")!;
     expect(drawnG.querySelectorAll("use.instance:not(.alt)")).toHaveLength(1);
     expect(canvas().querySelector(".layer path[fill]")).not.toBeNull();
     drawStroke([400, 400], [460, 410], [500, 460], [410, 500]);
-    expect(rows()).toHaveLength(2);
+    expect(canvasLayerIds()).toHaveLength(2);
     expect(drawnG.querySelectorAll("path").length).toBeGreaterThanOrEqual(2);
   });
 

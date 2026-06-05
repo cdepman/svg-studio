@@ -14,7 +14,7 @@ import { smoothPathD } from "../motion/centerPath";
 import type { Scene } from "./useScene";
 import type { GBounds } from "./selectionBounds";
 import type { WorldRect } from "../App";
-import type { Center, Layer, PartTransform, RepeatParams, Viewport } from "../types";
+import type { Center, DesignView, Layer, PartTransform, RepeatParams, Viewport } from "../types";
 
 const CORNERS = ["tl", "tr", "bl", "br"] as const;
 const CORNER_CURSOR: Record<string, string> = {
@@ -31,6 +31,10 @@ interface CanvasProps {
   gizmo: GBounds | null;
   /** Per-layer outline boxes when several are selected (id + bounds). */
   selectionBoxes: (GBounds & { id: string })[];
+  /** Design-mode canvas framing (focus the motif), or null outside Design. */
+  designView: DesignView | null;
+  /** What a double-click drills into: parts (Design), a copy (Arrange), or none. */
+  dblClickTarget: "part" | "component" | null;
   /** Which layer+copy is in single-component edit mode, or null. */
   componentEdit: { layerId: string; index: number } | null;
   onComponentSelect: (layerId: string, index: number) => void;
@@ -41,6 +45,7 @@ interface CanvasProps {
   onEnterPartMode: (layerId: string, index: number) => void;
   onSelectPart: (layerId: string, partId: string) => void;
   onCommitPartTransform: (layerId: string, partId: string, t: PartTransform) => void;
+  onDuplicatePart: (layerId: string, partId: string, t: PartTransform) => void;
   onExitPart: () => void;
   motionCss: string;
   /** The primary layer's motion path (world points), shown while in Animate mode. */
@@ -76,6 +81,8 @@ export function Canvas({
   selectedIds,
   gizmo,
   selectionBoxes,
+  designView,
+  dblClickTarget,
   componentEdit,
   onComponentSelect,
   onComponentExit,
@@ -84,6 +91,7 @@ export function Canvas({
   onEnterPartMode,
   onSelectPart,
   onCommitPartTransform,
+  onDuplicatePart,
   onExitPart,
   motionCss,
   motionPath,
@@ -324,11 +332,12 @@ export function Canvas({
         const isDouble =
           !!last && last.id === id && now - last.t < 350 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 6;
         lastTap.current = isDouble ? null : { id, t: now, x: e.clientX, y: e.clientY };
-        if (isDouble && tool === "select") {
+        if (isDouble && tool === "select" && dblClickTarget) {
           e.preventDefault();
           const iEl = (e.target as Element).closest?.("[data-i]");
-          const i = iEl?.getAttribute("data-i");
-          onComponentSelect(id, i != null ? parseInt(i, 10) : 0);
+          const i = iEl != null ? parseInt(iEl.getAttribute("data-i") ?? "0", 10) : 0;
+          if (dblClickTarget === "part") onEnterPartMode(id, i);
+          else onComponentSelect(id, i);
           return;
         }
         onLayerPointerDown(e, id, e.shiftKey);
@@ -388,7 +397,7 @@ export function Canvas({
   const drillToParts = () => {
     if (!componentEdit) return;
     const cl = layers.find((l) => l.id === componentEdit.layerId);
-    if (cl && (cl.motif.parts?.length ?? 0) >= 2) onEnterPartMode(componentEdit.layerId, componentEdit.index);
+    if (cl && (cl.motif.parts?.length ?? 0) >= 1) onEnterPartMode(componentEdit.layerId, componentEdit.index);
   };
 
   const endPan = () => {
@@ -405,7 +414,7 @@ export function Canvas({
   return (
     <svg
       ref={scene.svgRef}
-      className={`canvas-svg${drawingMotionPath ? " drawing-path" : ""}`}
+      className={`canvas-svg${drawingMotionPath ? " drawing-path" : ""}${designView ? ` design-mode view-${designView}` : ""}`}
       onPointerDown={onSvgPointerDown}
       onPointerMove={onSvgPointerMove}
       onPointerUp={onSvgPointerUp}
@@ -554,6 +563,7 @@ export function Canvas({
                 inv={inv}
                 onSelectPart={(partId) => onSelectPart(pl.id, partId)}
                 onCommitTransform={(partId, t) => onCommitPartTransform(pl.id, partId, t)}
+                onDuplicatePart={(partId, t) => onDuplicatePart(pl.id, partId, t)}
                 setDragging={setDragging}
               />
             ) : null;

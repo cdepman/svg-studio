@@ -21,6 +21,8 @@
     --teal: oklch(0.72 0.11 192);
     --teal-weak: oklch(0.72 0.11 192 / 0.16);
     --amber: oklch(0.82 0.14 80);
+    --violet: oklch(0.62 0.19 290);
+    --violet-weak: oklch(0.62 0.19 290 / 0.16);
     --green: oklch(0.74 0.13 155);
 
     --mode: var(--pink);
@@ -43,6 +45,7 @@
   #root, .app { height: 100vh; }
   .app { display: flex; flex-direction: column; }
   .app[data-mode="design"]  { --mode: var(--pink); --mode-weak: var(--pink-weak); }
+  .app[data-mode="arrange"] { --mode: var(--violet); --mode-weak: var(--violet-weak); }
   .app[data-mode="animate"] { --mode: var(--teal); --mode-weak: var(--teal-weak); }
   button { font-family: inherit; cursor: pointer; color: inherit; }
   ::selection { background: var(--mode-weak); }
@@ -85,6 +88,7 @@
   .mode-btn .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .55; }
   .mode-btn:hover { color: var(--text); }
   .mode-btn.is-active[data-m="design"]  { background: var(--pink); color: #fff; }
+  .mode-btn.is-active[data-m="arrange"] { background: var(--violet); color: #fff; }
   .mode-btn.is-active[data-m="animate"] { background: var(--teal); color: #06201d; }
   .mode-btn.is-active .dot { opacity: 1; background: currentColor; }
 
@@ -141,6 +145,7 @@
   .panel-head { display: flex; align-items: center; gap: 6px; height: 42px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--line); }
   .panel-title { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: 1.4px; text-transform: uppercase; color: var(--faint); }
   .panel-head-spacer { flex: 1; }
+  .comp-name { font-size: 12px; color: var(--muted); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .layer-search { display: flex; align-items: center; gap: 8px; margin: 8px 10px 4px; padding: 0 10px; height: 30px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-sm); }
   .layer-search svg { width: 14px; height: 14px; color: var(--faint); flex: none; }
@@ -174,12 +179,15 @@
   .layer-row.part-row.part-hidden .lr-name { color: var(--faint); text-decoration: line-through; }
   .lr-thumb.part.is-hidden { opacity: 0.35; }
 
-  /* on-canvas sub-part edit overlay */
-  .part-hit { fill: transparent; stroke: color-mix(in oklch, var(--mode) 55%, transparent);
-    stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; cursor: move; }
-  .part-hit:hover { fill: color-mix(in oklch, var(--mode) 10%, transparent); stroke-dasharray: none; }
-  .part-hit.selected { fill: color-mix(in oklch, var(--mode) 8%, transparent);
-    stroke: var(--mode); stroke-width: 1.5; stroke-dasharray: none; }
+  /* on-canvas sub-part edit overlay — mirrors the composite/component gizmo.
+     Hit-areas are invisible (click to select); only the selected part draws the
+     frame + handles + knob, all screen-sized so they're easy to grab. */
+  .part-hit { fill: transparent; cursor: move; }
+  .part-hit:hover { fill: color-mix(in oklch, var(--mode) 7%, transparent); }
+  .part-ghost { opacity: 0.65; pointer-events: none; }
+  .part-frame { fill: none; stroke: var(--mode); stroke-width: 1.5; stroke-dasharray: 6 4;
+    vector-effect: non-scaling-stroke; pointer-events: none; }
+  .part-handle { fill: #fff; stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
   .part-rotate { cursor: grab; }
   .part-rotate-line { stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
   .part-rotate-knob { fill: #fff; stroke: var(--mode); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
@@ -376,6 +384,23 @@
   .motif-chip.load svg { width: 18px; height: 18px; }
   .motif-chip.load:hover { color: var(--text); }
 
+  .motif-library { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .motif-card { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 9px; align-items: center;
+    padding: 7px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel-2); }
+  .motif-card:hover { border-color: var(--line-3); }
+  .motif-thumb { width: 54px; height: 54px; padding: 6px; display: grid; place-items: center;
+    border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--canvas); cursor: pointer; overflow: hidden; }
+  .motif-thumb:hover { border-color: var(--mode); }
+  .motif-thumb img { max-width: 100%; max-height: 100%; display: block; object-fit: contain; }
+  .motif-meta { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+  .motif-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text); font-size: 12.5px; font-weight: 600; }
+  .motif-actions { display: flex; gap: 6px; }
+  .mini-btn { height: 25px; padding: 0 9px; border: 1px solid var(--line-2); border-radius: 6px;
+    background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; }
+  .mini-btn:hover:not(:disabled) { color: var(--text); background: var(--hover); border-color: var(--line-3); }
+  .mini-btn:disabled { opacity: 0.45; cursor: default; }
+
   .anim-actions { display: flex; gap: 8px; }
   .anim-actions .btn { flex: 1; justify-content: center; }
 
@@ -468,6 +493,13 @@
   .center-hit:active { cursor: grabbing; }
 
   .motion-wrapper { transform-box: fill-box; }
+  /* Design mode: focus the active motif (copy 0), keep the repeat as a quiet,
+     locked preview. "isolated" hides the repeat; "full" shows it bright. */
+  .canvas-svg.design-mode.view-context .instance-placement { opacity: 0.13; pointer-events: none; transition: opacity .15s; }
+  .canvas-svg.design-mode.view-context .instance-placement[data-i="0"] { opacity: 1; pointer-events: auto; }
+  .canvas-svg.design-mode.view-isolated .instance-placement { display: none; }
+  .canvas-svg.design-mode.view-isolated .instance-placement[data-i="0"] { display: block; }
+
   /* Motion-path draw mode: pencil cursor + focus on the primary petal. */
   .canvas-svg.drawing-path { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2316c5b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20l4-1 11-11-3-3L5 16l-1 4z'/%3E%3Cpath d='M14 6l3 3'/%3E%3C/svg%3E") 2 22, crosshair; }
   .canvas-svg.drawing-path .instance-placement { opacity: 0.14; transition: opacity .15s; }

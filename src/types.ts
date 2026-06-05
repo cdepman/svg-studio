@@ -129,6 +129,11 @@ export interface CenterPathAnimation {
 
 export type LayerAnimation = CenterPathAnimation;
 
+/** Editor modes: design the unit, arrange the repeat, animate it. */
+export type EditorMode = "design" | "arrange" | "animate";
+/** How the Design canvas frames the active motif vs. its repeated preview. */
+export type DesignView = "context" | "isolated" | "full";
+
 // --- Concurrent, looping ambient effects (independent of the center path).
 // Each is realized as an infinite CSS @keyframes loop; they compose with each
 // other and with the center-path motion. PRD §ANIM.

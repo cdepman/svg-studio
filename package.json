@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "convert:motifs": "node scripts/convert-ai-to-svg.mjs",
+    "split:motifs": "node scripts/split-svg-motifs.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

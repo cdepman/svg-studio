@@ -6,8 +6,9 @@
 // (native input/change listeners) so a slider drag triggers ZERO React renders.
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../ui/icons";
-import type { CenterPathAnimation, Layer, LayerEffects, OrientationMode, RepeatParams } from "../types";
+import type { CenterPathAnimation, DesignView, EditorMode, Layer, LayerEffects, OrientationMode, RepeatParams } from "../types";
 import type { NumericParamKey } from "../canvas/useScene";
+import type { MotifLibraryItem } from "../motifLibrary";
 
 const DEFAULT_EFFECTS: LayerEffects = {
   individualSpin: { enabled: false, periodSeconds: 6, direction: "cw", stagger: false },
@@ -17,7 +18,9 @@ const DEFAULT_EFFECTS: LayerEffects = {
 };
 
 interface ControlsProps {
-  mode: "design" | "animate";
+  mode: EditorMode;
+  designView: DesignView;
+  onSetDesignView: (v: DesignView) => void;
   primary: Layer | null;
   selectionCount: number;
   allSelected: boolean;
@@ -37,6 +40,9 @@ interface ControlsProps {
   onDeleteAnimation: () => void;
   onUpdateAnimation: (patch: (animation: CenterPathAnimation) => CenterPathAnimation) => void;
   onUpdateEffects: (patch: (e: LayerEffects) => LayerEffects) => void;
+  motifLibrary: MotifLibraryItem[];
+  onApplyLibraryMotif: (item: MotifLibraryItem) => void | Promise<void>;
+  onAddLibraryMotif: (item: MotifLibraryItem) => void | Promise<void>;
 }
 
 const pct = (v: number, min: number, max: number) => ((v - min) / (max - min)) * 100;
@@ -190,9 +196,13 @@ export function Controls(props: ControlsProps) {
           {primary.locked ? Icon.lock({ size: 15 }) : Icon.unlock({ size: 15 })}
         </button>
       </div>
-      {mode === "design"
-        ? <DesignInspector {...props} editable={editable} />
-        : <AnimateInspector {...props} editable={editable} />}
+      {mode === "design" ? (
+        <DesignInspector {...props} editable={editable} />
+      ) : mode === "arrange" ? (
+        <ArrangeInspector {...props} editable={editable} />
+      ) : (
+        <AnimateInspector {...props} editable={editable} />
+      )}
     </aside>
   );
 }
@@ -255,10 +265,60 @@ function RepeatGroups({ collapsibleSecondary, ...props }: ControlsProps & { coll
   );
 }
 
-function DesignInspector(props: ControlsProps) {
+// Arrange = lay out the repeat (count / offsets / rotation / seam / scaling).
+function ArrangeInspector(props: ControlsProps) {
   return (
     <div className="insp-scroll scroll">
       <RepeatGroups {...props} />
+    </div>
+  );
+}
+
+// Design = edit the atomic unit (the motif), with the repeat as a live preview.
+function DesignInspector(props: ControlsProps) {
+  return (
+    <div className="insp-scroll scroll">
+      <section className="group">
+        <h2 className="group-title">Canvas <span className="gt-line" /></h2>
+        <RadioGroup<DesignView>
+          value={props.designView}
+          options={[["context", "Context preview"], ["isolated", "Isolated"], ["full", "Full repeat"]]}
+          onChange={props.onSetDesignView}
+        />
+      </section>
+      <section className="group">
+        <h2 className="group-title">Motif <span className="gt-line" /></h2>
+        <div className="empty-note" style={{ textAlign: "left", padding: "2px 2px 6px" }}>
+          Edit the atomic unit. The pencil draws a new shape; double-click the artwork to select its parts, then
+          drag to move, use the corner handles to resize, the knob to rotate, recolor with the swatch, or
+          <b> Alt-drag to copy</b>. Every copy in the repeat updates live.
+        </div>
+      </section>
+      <section className="group">
+        <h2 className="group-title">Library <span className="gt-line" /></h2>
+        {props.motifLibrary.length === 0 ? (
+          <div className="empty-note" style={{ textAlign: "left", padding: "2px" }}>
+            Drop SVGs into motif-seed-library/svg, then restart the dev server.
+          </div>
+        ) : (
+          <div className="motif-library">
+            {props.motifLibrary.map((item) => (
+              <div key={item.id} className="motif-card">
+                <button className="motif-thumb" onClick={() => void props.onApplyLibraryMotif(item)} title={`Use ${item.name}`}>
+                  <img src={item.previewUrl} alt="" loading="lazy" />
+                </button>
+                <div className="motif-meta">
+                  <span className="motif-name" title={item.filename}>{item.name}</span>
+                  <div className="motif-actions">
+                    <button className="mini-btn" onClick={() => void props.onApplyLibraryMotif(item)} disabled={!props.editable}>Use</button>
+                    <button className="mini-btn" onClick={() => void props.onAddLibraryMotif(item)}>Add</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

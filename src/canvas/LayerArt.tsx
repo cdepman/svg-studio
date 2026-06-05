@@ -107,7 +107,7 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
                 <g
                   key={part.id}
                   data-part-render={part.id}
-                  transform={partTransformAttr(part.transform, part.cx, part.cy) ?? undefined}
+                  transform={partTransformAttr(part.transform, part.cx, part.cy) ?? "translate(0 0)"}
                   dangerouslySetInnerHTML={{ __html: part.fill ? recolorMarkup(part.baseMarkup, part.fill) : part.baseMarkup }}
                 />
               ))}

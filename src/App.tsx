@@ -15,10 +15,13 @@ import { Icon } from "./ui/icons";
 import { Timeline } from "./ui/Timeline";
 import { DEFAULT_MOTIF_SVG } from "./defaultMotif";
 import { importSvgFromFile, importSvgFromText } from "./motif/importSvg";
+import { MOTIF_LIBRARY, type MotifLibraryItem } from "./motifLibrary";
 import { boxCenter, DEFAULT_FILL, DEFAULT_PENCIL, strokeToFilledPath, unionBox, type PencilSettings } from "./motif/drawnPath";
 import { motifFillColor } from "./motif/recolor";
 import {
   appendPart,
+  duplicatePart,
+  newPartId,
   partColor,
   recolorMotif,
   reorderParts,
@@ -59,7 +62,7 @@ import {
   reorderByDisplay,
   updateLayer,
 } from "./document/layers";
-import type { Center, Layer, LayerEffects, LayerGroup, Motif, PartTransform, RepeatParams } from "./types";
+import type { Center, DesignView, EditorMode, Layer, LayerEffects, LayerGroup, Motif, PartTransform, RepeatParams } from "./types";
 import type { CenterPathAnimation } from "./types";
 
 type StateAction<T> = T | ((prev: T) => T);
@@ -113,6 +116,8 @@ const DEFAULT_PARAMS: RepeatParams = {
 // not just the radialize button — hides the wrap seam. (At count 1 the two-half
 // render just draws the single shape, so it's harmless.)
 const DRAWN_PARAMS: RepeatParams = { ...DEFAULT_PARAMS, count: 1, radiusOffset: 0 };
+const IMPORT_REPEAT_COUNT = 8;
+const IMPORT_TARGET_MOTIF_SIZE = 150;
 
 /** Evenly thin a dense freehand point list down to at most `max` points (keeps
  *  first + last) so a drawn motion path stays a compact, smooth curve. */
@@ -172,7 +177,8 @@ export default function App() {
   // is selected yet; set = that specific sub-part is selected for move/rotate.
   // index = which copy the overlay is shown on (edits sync to all copies).
   const [partEdit, setPartEdit] = useState<{ layerId: string; partId: string | null; index: number } | null>(null);
-  const [mode, setMode] = useState<"design" | "animate">("design");
+  const [mode, setMode] = useState<EditorMode>("design");
+  const [designView, setDesignView] = useState<DesignView>("context");
   const [openMenu, setOpenMenu] = useState<"file" | "export" | null>(null);
   const [loop, setLoop] = useState(true);
   const [playTime, setPlayTime] = useState(0);
@@ -348,12 +354,17 @@ export default function App() {
     });
   };
 
-  // Center the world origin in the viewport once on mount.
+  // Frame the view once on mount: in Design (the default) center the active motif
+  // (copy 0); otherwise just center the world origin.
   useEffect(() => {
     const svg = scene.svgRef.current;
     if (!svg) return;
-    const r = svg.getBoundingClientRect();
-    setViewport((v) => ({ ...v, tx: r.width / 2, ty: r.height / 2 }));
+    if (mode === "design" && primary) {
+      frameMotif(primary);
+    } else {
+      const r = svg.getBoundingClientRect();
+      setViewport((v) => ({ ...v, tx: r.width / 2, ty: r.height / 2 }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -386,12 +397,43 @@ export default function App() {
   // (Imported SVGs live in their own large unit space; without this they show
   //  blown-up at 100%.)
   function fitLayerToView(layer: Layer) {
+    fitBoundsToView(layer.center, layerReach(layer.params, layer.motif.box, layer.scale));
+  }
+
+  // Frame just the active motif (copy 0) for the Design motif editor, so the
+  // unit you're editing sits centered instead of jammed at its radial offset.
+  function frameMotif(layer: Layer) {
+    const center = referenceInstancePoint(layer);
+    const half = 0.5 * Math.hypot(layer.motif.box.width, layer.motif.box.height) * layer.scale * layer.params.sourceScale;
+    fitBoundsToView(center, Math.max(half * 1.5, 1));
+  }
+
+  function fitBoundsToView(center: Center, reach: number) {
     const svg = scene.svgRef.current;
     if (!svg) return;
     const r = svg.getBoundingClientRect();
-    const span = Math.max(2 * layerReach(layer.params, layer.motif.box, layer.scale), 1);
+    if (r.width < 1 || r.height < 1) return; // canvas not laid out yet
+    const span = Math.max(2 * reach, 1);
     const s = Math.max(0.05, Math.min(4, (0.8 * Math.min(r.width, r.height)) / span));
-    setViewport({ s, tx: r.width / 2 - layer.center.x * s, ty: r.height / 2 - layer.center.y * s });
+    setViewport({ s, tx: r.width / 2 - center.x * s, ty: r.height / 2 - center.y * s });
+  }
+
+  function fittedMotifParams(motif: Motif): RepeatParams {
+    const maxDim = Math.max(motif.box.width, motif.box.height, 1);
+    const diag = Math.max(Math.hypot(motif.box.width, motif.box.height), 1);
+    const sourceScale = Math.min(1, IMPORT_TARGET_MOTIF_SIZE / maxDim);
+    const scaledDiag = diag * sourceScale;
+    const spacingRadius = (scaledDiag * 0.72) / (2 * Math.sin(Math.PI / IMPORT_REPEAT_COUNT));
+    return {
+      ...DEFAULT_PARAMS,
+      count: IMPORT_REPEAT_COUNT,
+      sourceScale,
+      radiusOffset: Math.max(180, Math.round(spacingRadius)),
+      scaleStep: 0,
+      opacityStep: 0,
+      paintOffset: 0,
+      tuck: true,
+    };
   }
 
   function moveLayerWithAnimation(layer: Layer, delta: Center): Layer {
@@ -670,6 +712,24 @@ export default function App() {
     );
   }
 
+  // Switch editor mode, tidying up mode-specific edit state. Component edit
+  // belongs to Arrange, part edit to Design; neither should leak across.
+  const switchMode = (m: EditorMode) => {
+    if (m !== "animate") {
+      setAnimationPlaying(false);
+      setDrawingMotionPath(false);
+    }
+    setComponentEdit(null);
+    setPartEdit(null);
+    // Re-frame on the design↔(arrange/animate) transition: Design centers the
+    // active motif (copy 0) for editing; the others fit the whole repeat.
+    if (primary) {
+      if (m === "design" && mode !== "design") frameMotif(primary);
+      else if (m !== "design" && mode === "design") fitLayerToView(primary);
+    }
+    setMode(m);
+  };
+
   // Enter (or cancel) pencil draw mode for the motion path. The animation itself
   // is only created once a path is actually drawn (onMotionPathDrawn) — so
   // clicking the button never alters the artwork or drops a confusing default.
@@ -721,6 +781,53 @@ export default function App() {
     const motif = primary?.motif ?? importSvgFromText(DEFAULT_MOTIF_SVG);
     newLayerCount.current += 1;
     addLayerFromMotif(motif, `Radial Repeat ${newLayerCount.current}`);
+  }
+
+  async function motifFromLibraryItem(item: MotifLibraryItem): Promise<Motif> {
+    return importSvgFromText(await item.loadSvg());
+  }
+
+  async function applyLibraryMotif(item: MotifLibraryItem) {
+    try {
+      const motif = await motifFromLibraryItem(item);
+      const params = fittedMotifParams(motif);
+      const ids = editableIdsRef.current;
+      if (ids.size === 0) {
+        newLayerCount.current += 1;
+        const layer = addLayerFromMotif(motif, item.name, params);
+        fitLayerToView(layer);
+        setNotice(motif.simplified ? "This library SVG was simplified on import." : null);
+        return;
+      }
+      const primaryForFit = docRef.current.layers.find((l) => l.id === docRef.current.primaryId);
+      updateLayers((ls) =>
+        ls.map((l) =>
+          ids.has(l.id)
+            ? { ...l, motif, params, components: {}, updatedAt: Date.now() }
+            : l
+        )
+      );
+      if (primaryForFit) {
+        fitBoundsToView(primaryForFit.center, layerReach(params, motif.box, primaryForFit.scale));
+      }
+      setComponentEdit(null);
+      setPartEdit(null);
+      setNotice(motif.simplified ? "This library SVG was simplified on import." : null);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not load that library motif.");
+    }
+  }
+
+  async function addLibraryMotif(item: MotifLibraryItem) {
+    try {
+      const motif = await motifFromLibraryItem(item);
+      newLayerCount.current += 1;
+      const layer = addLayerFromMotif(motif, item.name, fittedMotifParams(motif));
+      fitLayerToView(layer);
+      setNotice(motif.simplified ? "This library SVG was simplified on import." : null);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not load that library motif.");
+    }
   }
 
   // Pencil commit: a finished stroke becomes a filled path. The first stroke
@@ -885,7 +992,8 @@ export default function App() {
   // on the canvas. Only worth it for multi-part motifs.
   const enterPartMode = (layerId: string, index = 0) => {
     const l = docRef.current.layers.find((x) => x.id === layerId);
-    if (!l || l.locked || (l.motif.parts?.length ?? 0) < 2) return;
+    // Even a single-shape motif is part-editable (move/resize/recolor the shape).
+    if (!l || l.locked || (l.motif.parts?.length ?? 0) < 1) return;
     setComponentEdit(null);
     updateSelection([layerId]);
     setPartEdit({ layerId, partId: null, index });
@@ -908,6 +1016,14 @@ export default function App() {
     updateLayers((ls) =>
       updateLayer(ls, layerId, (l) => ({ ...l, motif: setPartTransform(l.motif, partId, transform), updatedAt: Date.now() }))
     );
+  };
+  // Alt-drag a part to copy it: the copy takes the gesture's transform; select it.
+  const onDuplicatePart = (layerId: string, partId: string, transform: PartTransform) => {
+    const newId = newPartId();
+    updateLayers((ls) =>
+      updateLayer(ls, layerId, (l) => ({ ...l, motif: duplicatePart(l.motif, partId, newId, transform), updatedAt: Date.now() }))
+    );
+    setPartEdit((prev) => ({ layerId, partId: newId, index: prev?.layerId === layerId ? prev.index : 0 }));
   };
   const onMove = (id: string, dir: MoveDir) => {
     updateLayers((ls) => {
@@ -938,9 +1054,7 @@ export default function App() {
     try {
       const m = await importSvgFromFile(file);
       newLayerCount.current += 1;
-      // Import as a single object (count 1, no repeat). The user raises the
-      // count / uses Radialize when they want a ring.
-      const layer = addLayerFromMotif(m, `Imported ${newLayerCount.current}`, DRAWN_PARAMS);
+      const layer = addLayerFromMotif(m, `Imported ${newLayerCount.current}`, fittedMotifParams(m));
       fitLayerToView(layer);
       setNotice(m.simplified ? "This SVG was simplified on import." : null);
     } catch (err) {
@@ -1116,10 +1230,13 @@ export default function App() {
 
         <div className="tb-center">
           <div className="mode-switch">
-            <button className={`mode-btn${mode === "design" ? " is-active" : ""}`} data-m="design" onClick={() => { setAnimationPlaying(false); setMode("design"); }}>
+            <button className={`mode-btn${mode === "design" ? " is-active" : ""}`} data-m="design" onClick={() => switchMode("design")}>
               <span className="dot" /> Design
             </button>
-            <button className={`mode-btn${mode === "animate" ? " is-active" : ""}`} data-m="animate" onClick={() => setMode("animate")}>
+            <button className={`mode-btn${mode === "arrange" ? " is-active" : ""}`} data-m="arrange" onClick={() => switchMode("arrange")}>
+              <span className="dot" /> Arrange
+            </button>
+            <button className={`mode-btn${mode === "animate" ? " is-active" : ""}`} data-m="animate" onClick={() => switchMode("animate")}>
               <span className="dot" /> Animate
             </button>
           </div>
@@ -1151,6 +1268,8 @@ export default function App() {
 
       <div className="middle">
         <LayersPanel
+          mode={mode}
+          primaryId={primaryId}
           layers={layers}
           groups={groups}
           selectedIds={selectedSet}
@@ -1230,8 +1349,10 @@ export default function App() {
           <Canvas
             layers={layers}
             selectedIds={selectedSet}
-            gizmo={componentEdit || partEdit ? null : gizmo}
-            selectionBoxes={componentEdit || partEdit ? [] : selectionBoxes}
+            gizmo={componentEdit || partEdit || mode === "design" ? null : gizmo}
+            selectionBoxes={componentEdit || partEdit || mode === "design" ? [] : selectionBoxes}
+            designView={mode === "design" ? designView : null}
+            dblClickTarget={mode === "design" ? "part" : mode === "arrange" ? "component" : null}
             componentEdit={componentEdit}
             onComponentSelect={enterComponentEdit}
             onComponentExit={exitComponentEdit}
@@ -1240,6 +1361,7 @@ export default function App() {
             onEnterPartMode={enterPartMode}
             onSelectPart={onSelectPart}
             onCommitPartTransform={onSetPartTransform}
+            onDuplicatePart={onDuplicatePart}
             onExitPart={() => setPartEdit(null)}
             motionCss={motionCss}
             motionPath={mode === "animate" ? primaryMotionPath : null}
@@ -1288,6 +1410,8 @@ export default function App() {
 
         <Controls
           mode={mode}
+          designView={designView}
+          onSetDesignView={setDesignView}
           primary={primary}
           selectionCount={editableSelected.length}
           allSelected={allSelected}
@@ -1307,6 +1431,9 @@ export default function App() {
           onDeleteAnimation={deletePrimaryAnimation}
           onUpdateAnimation={updatePrimaryAnimation}
           onUpdateEffects={updateEffects}
+          motifLibrary={MOTIF_LIBRARY}
+          onApplyLibraryMotif={applyLibraryMotif}
+          onAddLibraryMotif={addLibraryMotif}
         />
       </div>
 
