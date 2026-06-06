@@ -749,6 +749,12 @@ export default function App() {
     if (docRef.current.partEdit) setPartEdit(null);
     const group = groupForLayer(docRef.current.groups, id);
     const ids = group?.layerIds ?? [id];
+    // In Design, switching to a different layer re-frames its motif so the unit
+    // you're now editing is centered (otherwise it may sit off-screen).
+    if (!additive && docRef.current.mode === "design" && id !== docRef.current.primaryId) {
+      const layer = docRef.current.layers.find((l) => l.id === id);
+      if (layer) frameMotif(layer);
+    }
     updateSelection((prev) => {
       if (!additive) return ids;
       const next = new Set(prev);
@@ -793,20 +799,36 @@ export default function App() {
     });
   }
 
-  // Marquee (click-drag) selection: select every visible, unlocked layer whose
-  // artwork box intersects the dragged rectangle. Shift adds to the selection.
-  const onMarqueeSelect = (rect: WorldRect, additive: boolean) => {
-    const hit = layers
+  function hitLayerIdsInRect(rect: WorldRect, excludeLayerId?: string) {
+    return docRef.current.layers
       .filter(
         (l) =>
+          l.id !== excludeLayerId &&
           l.visible &&
           !l.locked &&
           boxIntersects(rect, l.center, layerReach(l.params, l.motif.box, l.scale))
       )
       .map((l) => l.id);
+  }
+
+  function selectLayersByRect(rect: WorldRect, additive: boolean, excludeLayerId?: string): boolean {
+    const hit = hitLayerIdsInRect(rect, excludeLayerId);
+    if (hit.length === 0) return false;
     updateSelection((prev) =>
       expandGroupedIds(additive ? Array.from(new Set([...prev, ...hit])) : hit)
     );
+    return true;
+  }
+
+  // Marquee (click-drag) selection: select every visible, unlocked layer whose
+  // artwork box intersects the dragged rectangle. Shift adds to the selection.
+  const onMarqueeSelect = (rect: WorldRect, additive: boolean) => {
+    const hit = hitLayerIdsInRect(rect);
+    if (hit.length === 0) {
+      updateSelection(additive ? (prev) => prev : []);
+      return;
+    }
+    selectLayersByRect(rect, additive);
   };
 
   // Grab a layer's artwork: shift toggles selection (no move); otherwise select
@@ -824,6 +846,24 @@ export default function App() {
     lastGrab.current = { id, multi: alreadySelected && editableIdsRef.current.size > 1, prevSelected: docRef.current.selectedIds };
     if (!alreadySelected) selectSingle(id);
     moveBegin(e, moveIds);
+  };
+
+  // Design mode: the part-edit overlay covers the whole canvas, so a click on a
+  // DIFFERENT layer's artwork can't reach the normal layer hit-test. Resolve it
+  // here — pick the front-most other layer whose reach contains the point and
+  // select it (so you can switch the edited motif by clicking it on the canvas).
+  // Returns true when it selected another layer (the caller then skips its marquee).
+  const pickLayerAt = (clientX: number, clientY: number): boolean => {
+    const w = scene.screenToWorld(clientX, clientY);
+    const within = (l: Layer) =>
+      boxIntersects({ minX: w.x, minY: w.y, maxX: w.x, maxY: w.y }, l.center, layerReach(l.params, l.motif.box, l.scale));
+    const prim = docRef.current.layers.find((l) => l.id === docRef.current.primaryId);
+    for (let i = docRef.current.layers.length - 1; i >= 0; i--) {
+      const l = docRef.current.layers[i];
+      if (l.id === prim?.id || !l.visible || l.locked) continue;
+      if (within(l)) { selectSingle(l.id); return true; }
+    }
+    return false;
   };
 
   // Apply a patch to every editable-selected layer that has an animation.
@@ -1020,7 +1060,8 @@ export default function App() {
 
   // Pencil commit: one finished stroke becomes one selected radial-repeat layer.
   function onDrawCommit(points: PencilPoint[], closed: boolean) {
-    const sp = strokeToFilledPath(points, pencil.size / viewport.s, pencil.smoothing, fillColor, pencil.pressure, closed);
+    const drawStrokeWidth = closed ? strokeWidth : Math.max(0.5, strokeWidth);
+    const sp = strokeToFilledPath(points, drawStrokeWidth, pencil.smoothing, fillColor, strokeColor, drawStrokeWidth, pencil.pressure, closed);
     if (!sp) return; // tiny stroke / stray click — silently ignored. PRD §18.
 
     drawnCount.current += 1;
@@ -1479,7 +1520,7 @@ export default function App() {
             <button className={`tool-btn${tool === "hand" ? " is-active" : ""}`} onClick={() => switchTool(tool === "hand" ? "select" : "hand")} title="Hand — drag to pan (H · or hold Space)">{Icon.hand()}</button>
             {mode === "design" && (
               <>
-                <button className={`tool-btn${tool === "pencil" ? " is-active" : ""}`} onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")} title="Pencil — draw a shape (P)">{Icon.pen()}</button>
+                <button className={`tool-btn${tool === "pencil" ? " is-active" : ""}`} onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")} title="Pencil — draw a path (P)">{Icon.pen()}</button>
                 <button className="tool-btn" onClick={pickColor} title="Eyedropper — pick a color from screen">{Icon.eyedropper({ size: 18 })}</button>
                 <div className="tool-rail-sep" />
                 <label className="tool-swatch" title={primary && tool === "select" ? "Layer fill" : "Default fill for new shapes"} style={{ background: swatchColor }}>
@@ -1493,10 +1534,6 @@ export default function App() {
           {tool === "pencil" && (
             <div className="pencil-panel">
               <div className="pp-title">Pencil</div>
-              <label>Size<span className="ctl-val">{pencil.size}</span>
-                <input type="range" min={2} max={80} step={1} value={pencil.size}
-                  onChange={(e) => setPencil((p) => ({ ...p, size: parseInt(e.target.value, 10) }))} />
-              </label>
               <label>Smoothing<span className="ctl-val">{pencil.smoothing}</span>
                 <input type="range" min={0} max={100} step={1} value={pencil.smoothing}
                   onChange={(e) => setPencil((p) => ({ ...p, smoothing: parseInt(e.target.value, 10) }))} />
@@ -1549,6 +1586,7 @@ export default function App() {
           onCommitPartTransform={onSetPartTransform}
           onCommitPartTransforms={onSetPartTransforms}
           onDuplicatePart={onDuplicatePart}
+            onPickLayer={pickLayerAt}
             onExitPart={() => setPartEdit(null)}
             motionCss={motionCss}
             motionPath={mode === "animate" ? primaryMotionPath : null}
@@ -1558,6 +1596,8 @@ export default function App() {
             tool={tool}
             pencil={pencil}
             fillColor={fillColor}
+            strokeColor={strokeColor}
+            strokeWidth={strokeWidth}
             onDrawCommit={onDrawCommit}
             viewport={viewport}
             dragging={dragging}
@@ -1566,6 +1606,7 @@ export default function App() {
             onLayerPointerDown={onLayerPointerDown}
             onMarqueeSelect={onMarqueeSelect}
             onMotionPathDrawn={onMotionPathDrawn}
+            onSelectLayersByRect={selectLayersByRect}
             onResizePointerDown={onResizePointerDown}
             onRotatePointerDown={onRotatePointerDown}
             onZoom={zoomAt}

@@ -117,6 +117,27 @@ describe("buildExportSvg (PRD §14)", () => {
     expect(svg).toContain('transform="translate(25,30)"');
   });
 
+  it("strips the invisible .instance-hit rects (they default to black without CSS)", () => {
+    const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const root = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const layer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    const hit = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    layer.classList.add("layer");
+    layer.setAttribute("data-layer-id", "a");
+    use.setAttribute("href", "#motif-a");
+    hit.classList.add("instance-hit"); // no fill → black in a standalone SVG
+    layer.appendChild(use);
+    layer.appendChild(hit);
+    root.appendChild(layer);
+    svgEl.appendChild(root);
+    Object.defineProperty(root, "getBBox", { value: () => ({ x: 0, y: 0, width: 100, height: 100 }) });
+
+    const svg = buildExportSvgFromRenderedLayers(root)!;
+    expect(svg).toContain("<use"); // real artwork kept
+    expect(svg).not.toContain("instance-hit"); // hit rects removed
+  });
+
   it("forces downloaded filenames to keep an .svg extension", () => {
     expect(ensureSvgFilename("radial-repeat-004")).toBe("radial-repeat-004.svg");
     expect(ensureSvgFilename("radial-repeat-004.SVG")).toBe("radial-repeat-004.SVG");

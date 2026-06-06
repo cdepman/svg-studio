@@ -12,12 +12,13 @@ const square: Center[] = [
 
 describe("createDrawnMotif (PRD §13)", () => {
   it("produces a normalized filled-path Motif anchored at its visual center", () => {
-    const drawn = createDrawnMotif(square, 12, 50, "#abcdef", 0, true);
+    const drawn = createDrawnMotif(square, 2, 50, "#abcdef", "#111111", 2, 0, true);
     expect(drawn).not.toBeNull();
     const { motif, worldCenter } = drawn!;
-    // filled closed region: literal fill + same-color round stroke, no currentColor
+    // filled closed region: literal fill + real border, no currentColor
     expect(motif.innerHtml).toContain('fill="#abcdef"');
-    expect(motif.innerHtml).toContain('stroke="#abcdef"');
+    expect(motif.innerHtml).toContain('stroke="#111111"');
+    expect(motif.innerHtml).toContain('stroke-width="2"');
     expect(motif.innerHtml).not.toContain("currentColor");
     expect(motif.innerHtml).toMatch(/^<path d="M/);
     expect(motif.innerHtml).toContain("Z"); // closed path
@@ -37,11 +38,13 @@ describe("createDrawnMotif (PRD §13)", () => {
     expect(createDrawnMotif([{ x: 0, y: 0 }, { x: 0.5, y: 0 }], 2, 50, "#000")).toBeNull();
   });
 
-  it("keeps open strokes as ink lines instead of filled interiors", () => {
-    const drawn = createDrawnMotif(square.slice(0, 4), 12, 50, "#123456", 80, false);
+  it("keeps open strokes as stroked centerline paths instead of filled brush blobs", () => {
+    const drawn = createDrawnMotif(square.slice(0, 4), 2, 50, "#123456", "#0a0a0a", 2, 0, false);
     expect(drawn).not.toBeNull();
-    expect(drawn!.motif.innerHtml).toContain('fill="#123456"');
-    expect(drawn!.motif.innerHtml).toContain('stroke="none"');
+    expect(drawn!.motif.innerHtml).toContain('fill="none"');
+    expect(drawn!.motif.innerHtml).toContain('stroke="#0a0a0a"');
+    expect(drawn!.motif.innerHtml).toContain('stroke-width="2"');
+    expect(drawn!.motif.innerHtml).not.toContain("Z");
   });
 });
 
@@ -53,7 +56,10 @@ describe("svgPathFromStroke", () => {
     expect(d.startsWith("M")).toBe(true);
     expect(d.endsWith("Z")).toBe(true);
   });
-  it("returns empty for too few points", () => {
-    expect(svgPathFromStroke([[0, 0], [1, 1]])).toBe("");
+  it("returns an open line path for two-point centerlines", () => {
+    expect(svgPathFromStroke([[0, 0], [1, 1]], false)).toBe("M0,0 L1,1");
+  });
+  it("returns empty for fewer than two points", () => {
+    expect(svgPathFromStroke([[0, 0]])).toBe("");
   });
 });

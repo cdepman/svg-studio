@@ -199,50 +199,9 @@ export function LayersPanel({
     !q ? true : (entry.kind === "group" ? entry.group.name : entry.layer.name).toLowerCase().includes(q)
   );
 
-  // Design mode: the panel describes the active motif's COMPOSITION — its parts,
-  // reorderable (paint order) with per-part visibility — instead of the layer stack.
-  if (mode === "design") {
-    const primaryLayer = primaryId ? layerById.get(primaryId) ?? null : null;
-    const parts = primaryLayer?.motif.parts ?? [];
-    return (
-      <aside className="layers-panel">
-        <div className="panel-head">
-          <span className="panel-title">Composition</span>
-          <div className="panel-head-spacer" />
-          {primaryLayer && <span className="comp-name">{primaryLayer.name}</span>}
-        </div>
-        <div className="layer-list scroll">
-          {!primaryLayer ? (
-            <div className="empty-note">Select a layer to edit its motif.</div>
-          ) : parts.length === 0 ? (
-            <div className="empty-note">This motif is a single shape. Draw or import multi-part artwork to edit its parts here.</div>
-          ) : (
-            // Top row = front-most (last painted), like the layer stack.
-            parts
-              .slice()
-              .reverse()
-              .map((part) => (
-                <PartRow
-                  key={part.id}
-                  layer={primaryLayer}
-                  part={part}
-                  depth={0}
-                  selected={selectedPart?.layerId === primaryLayer.id && selectedPart.partIds.includes(part.id)}
-                  isOver={overPartId === part.id}
-                  dragging={dragging}
-                  draggedPartRef={draggedPart}
-                  setOverPartId={setOverPartId}
-                  onSelectPart={onSelectPart}
-                  onTogglePart={onTogglePart}
-                  onReorderPart={onReorderPart}
-                />
-              ))
-          )}
-        </div>
-      </aside>
-    );
-  }
-
+  // One unified panel for every mode: the full layer/group stack. In Design the
+  // selected layer's parts auto-expand so you can edit any motif's composition AND
+  // still reach (and switch between) every other layer or group.
   return (
     <aside className="layers-panel">
       <div className="panel-head">
@@ -295,7 +254,9 @@ export function LayersPanel({
           const anim = l.animation?.enabled;
           const parts = l.motif.parts ?? [];
           const hasParts = parts.length > 1;
-          const expanded = expandedParts.has(l.id);
+          // In Design, the active layer shows its parts without a manual expand,
+          // so its composition is right there to recolor/reorder.
+          const expanded = expandedParts.has(l.id) || (mode === "design" && l.id === primaryId && hasParts);
           return (
             <div key={l.id} style={{ position: "relative" }}>
               <div

@@ -38,6 +38,11 @@ interface PartEditLayerProps {
   spaceHeldRef?: { current: boolean };
   /** True while a two-finger pinch-zoom is in progress — suppress select/marquee. */
   pinchingRef?: { current: boolean };
+  /** A click on another layer's artwork selects it (returns true) instead of
+   *  starting a marquee on the layer currently being edited. */
+  onPickLayer?: (clientX: number, clientY: number) => boolean;
+  /** A marquee over other layers selects those layers instead of motif parts. */
+  onSelectLayersByRect?: (rect: Rect, additive: boolean, excludeLayerId?: string) => boolean;
 }
 
 // The marquee/select surface spans far beyond the motif box so a selection drag
@@ -123,7 +128,7 @@ export function PartEditLayer(props: PartEditLayerProps) {
     startClientX: number;
     startClientY: number;
   } | null>(null);
-  const marqueeDrag = useRef<{ start: Center; additive: boolean } | null>(null);
+  const marqueeDrag = useRef<{ start: Center; worldStart: Center; additive: boolean } | null>(null);
 
   const parts = (layer.motif.parts ?? []).filter((p) => p.visible);
   const selectedSet = new Set(selectedPartIds);
@@ -319,6 +324,11 @@ export function PartEditLayer(props: PartEditLayerProps) {
     marqueeDrag.current = null;
     if (!d || optsRef.current.pinchingRef?.current) { setMarquee(null); return; }
     const rect = normRect(d.start, toLocal(e.clientX, e.clientY));
+    const worldRect = normRect(d.worldStart, optsRef.current.scene.screenToWorld(e.clientX, e.clientY));
+    if (optsRef.current.onSelectLayersByRect?.(worldRect, d.additive, optsRef.current.layer.id)) {
+      setMarquee(null);
+      return;
+    }
     const ids = parts.filter((part) => rectIntersects(rect, partBox(part))).map((part) => part.id);
     optsRef.current.onSelectParts(ids, d.additive);
     setMarquee(null);
@@ -326,11 +336,14 @@ export function PartEditLayer(props: PartEditLayerProps) {
 
   const beginMarquee = (e: React.PointerEvent) => {
     if (optsRef.current.spaceHeldRef?.current || optsRef.current.pinchingRef?.current) return; // pan / pinch
+    // A click on another layer's artwork switches to editing that layer instead
+    // of marquee-selecting parts of the current one.
+    if (optsRef.current.onPickLayer?.(e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); return; }
     e.preventDefault();
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     const start = toLocal(e.clientX, e.clientY);
-    marqueeDrag.current = { start, additive: e.shiftKey || e.metaKey || e.ctrlKey };
+    marqueeDrag.current = { start, worldStart: props.scene.screenToWorld(e.clientX, e.clientY), additive: e.shiftKey || e.metaKey || e.ctrlKey };
     setMarquee(normRect(start, start));
     window.addEventListener("pointermove", onMarqueeMove);
     window.addEventListener("pointerup", onMarqueeUp);

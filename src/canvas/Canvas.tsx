@@ -52,6 +52,9 @@ interface CanvasProps {
   onCommitPartTransform: (layerId: string, partId: string, t: PartTransform) => void;
   onCommitPartTransforms: (layerId: string, transforms: Record<string, PartTransform>) => void;
   onDuplicatePart: (layerId: string, partId: string, t: PartTransform) => void;
+  /** Design: a click landing on another layer's artwork selects it. Returns true
+   *  when it switched layer (so the overlay skips its marquee). */
+  onPickLayer: (clientX: number, clientY: number) => boolean;
   onExitPart: () => void;
   motionCss: string;
   /** The primary layer's motion path (world points), shown while in Animate mode. */
@@ -64,6 +67,8 @@ interface CanvasProps {
   tool: "select" | "pencil" | "hand";
   pencil: PencilSettings;
   fillColor: string;
+  strokeColor: string;
+  strokeWidth: number;
   /** Finalize a pencil stroke (raw world points) into a drawn layer. */
   onDrawCommit: (points: PencilPoint[], closed: boolean) => void;
   viewport: Viewport;
@@ -75,6 +80,8 @@ interface CanvasProps {
   onMarqueeSelect: (rect: WorldRect, additive: boolean) => void;
   /** Commit a freehand-drawn motion path (raw world points). */
   onMotionPathDrawn: (points: Center[]) => void;
+  /** Design part-edit overlay can marquee-select other layers above/below it. */
+  onSelectLayersByRect: (rect: WorldRect, additive: boolean, excludeLayerId?: string) => boolean;
   onResizePointerDown: (e: React.PointerEvent) => void;
   onRotatePointerDown: (e: React.PointerEvent) => void;
   /** Zoom the canvas at an svg-local point. */
@@ -102,6 +109,7 @@ export function Canvas({
   onCommitPartTransform,
   onCommitPartTransforms,
   onDuplicatePart,
+  onPickLayer,
   onExitPart,
   motionCss,
   motionPath,
@@ -111,6 +119,8 @@ export function Canvas({
   tool,
   pencil,
   fillColor,
+  strokeColor,
+  strokeWidth,
   onDrawCommit,
   viewport,
   dragging,
@@ -119,6 +129,7 @@ export function Canvas({
   onLayerPointerDown,
   onMarqueeSelect,
   onMotionPathDrawn,
+  onSelectLayersByRect,
   onResizePointerDown,
   onRotatePointerDown,
   onZoom,
@@ -333,8 +344,11 @@ export function Canvas({
     const previewPts = snapping ? [...pts, drawStart.current] : pts;
     pencilPreviewRef.current?.setAttribute(
       "d",
-      pencilPreviewPath(previewPts, pencil.size * inv, pencil.smoothing, pencil.pressure, snapping)
+      pencilPreviewPath(previewPts, Math.max(0.5, strokeWidth), pencil.smoothing, pencil.pressure, snapping)
     );
+    pencilPreviewRef.current?.setAttribute("fill", snapping ? fillColor : "none");
+    pencilPreviewRef.current?.setAttribute("stroke", strokeColor);
+    pencilPreviewRef.current?.setAttribute("stroke-width", String(snapping ? Math.max(0, strokeWidth) : Math.max(0.5, strokeWidth)));
     pencilAnchorRef.current?.classList.toggle("snapping", snapping);
   };
   const scheduleDraw = () => {
@@ -381,9 +395,9 @@ export function Canvas({
     drawPts.current = [start];
     const el = pencilPreviewRef.current;
     if (el) {
-      el.setAttribute("fill", fillColor);
-      el.setAttribute("stroke", fillColor);
-      el.setAttribute("stroke-width", String(pencil.size * inv));
+      el.setAttribute("fill", "none");
+      el.setAttribute("stroke", strokeColor);
+      el.setAttribute("stroke-width", String(Math.max(0.5, strokeWidth)));
       el.setAttribute("d", "");
     }
     showAnchor(start);
@@ -655,8 +669,9 @@ export function Canvas({
             <path
               ref={pencilPreviewRef}
               className="pencil-preview"
-              fill={fillColor}
-              stroke={fillColor}
+              fill="none"
+              stroke={strokeColor}
+              strokeWidth={Math.max(0.5, strokeWidth)}
               strokeLinejoin="round"
               strokeLinecap="round"
               style={{ pointerEvents: "none" }}
@@ -784,6 +799,8 @@ export function Canvas({
                 setDragging={setDragging}
                 spaceHeldRef={spaceHeld}
                 pinchingRef={pinchingRef}
+                onPickLayer={onPickLayer}
+                onSelectLayersByRect={onSelectLayersByRect}
                 handlePx={handlePx}
                 rotateGapPx={rotateGapPx}
               />

@@ -201,7 +201,14 @@ export function buildExportSvgFromRenderedLayers(layersRoot: SVGGElement | null)
   const h = Math.max(1, box.height) + EXPORT_MARGIN * 2;
   const serializer = new XMLSerializer();
   const body = layerNodes
-    .map((node) => serializer.serializeToString(node.cloneNode(true)))
+    .map((node) => {
+      const clone = node.cloneNode(true) as SVGGElement;
+      // The per-copy `.instance-hit` rects are invisible in-app via CSS, but a
+      // standalone SVG has no CSS so their (missing) fill defaults to BLACK and
+      // they paint over the artwork. Strip them — they're pointer targets only.
+      clone.querySelectorAll(".instance-hit").forEach((el) => el.remove());
+      return serializer.serializeToString(clone);
+    })
     .join("\n");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">

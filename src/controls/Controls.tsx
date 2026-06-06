@@ -328,7 +328,7 @@ function DesignInspector(props: ControlsProps) {
       <section className="group">
         <h2 className="group-title">Motif <span className="gt-line" /></h2>
         <div className="empty-note" style={{ textAlign: "left", padding: "2px 2px 6px" }}>
-          Edit the atomic unit. The pencil draws a new shape; double-click the artwork to select its parts, then
+          Edit the atomic unit. The pencil draws a smoothed path; double-click the artwork to select its parts, then
           drag to move, use the corner handles to resize, the knob to rotate, recolor with the swatch, or
           <b> Alt-drag to copy</b>. Every copy in the repeat updates live.
         </div>
@@ -464,8 +464,8 @@ function EffectsSection({
           onChange={(v) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, periodSeconds: v } }))} />
         <ValueSlider label="Width" value={effects.wave.amount} min={5} max={220} step={5} fmt={(v) => `${Math.round(v)}px`}
           onChange={(v) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, amount: v } }))} />
-        <ValueSlider label="Waves" value={effects.wave.frequency} min={1} max={16} step={0.5} fmt={(v) => v.toFixed(1)}
-          onChange={(v) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, frequency: v } }))} />
+        <ValueSlider label="Waves" value={effects.wave.frequency} min={1} max={16} step={1} fmt={(v) => String(Math.round(v))}
+          onChange={(v) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, frequency: Math.round(v) } }))} />
         <FxLabel>Direction</FxLabel>
         <RadioGroup value={effects.wave.direction} options={dirOpts}
           onChange={(d) => onUpdateEffects((e) => ({ ...e, wave: { ...e.wave, direction: d } }))} />

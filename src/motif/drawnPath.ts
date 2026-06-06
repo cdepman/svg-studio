@@ -1,9 +1,9 @@
-// Pencil tool: raw pointer points -> either a pressure-aware ink line or, when
-// the stroke closes, a smooth filled shape based on the drawn outline.
+// Pencil tool: raw pointer points -> a smoothed SVG centerline path. Open
+// strokes stay as stroked paths; snapped/closed strokes become filled shapes.
 //
 // A drawn shape is NOT a special case — it becomes a Motif exactly like an
 // imported SVG (centered on its bbox via anchorX/anchorY). PRD §5, §13, §14.
-import { getStroke, getStrokePoints } from "perfect-freehand";
+import { getStrokePoints } from "perfect-freehand";
 import { singlePart } from "./parts";
 import type { Box, Center, Motif } from "../types";
 
@@ -22,9 +22,9 @@ export interface PencilSettings {
 }
 
 export const DEFAULT_PENCIL: PencilSettings = {
-  size: 18,
-  smoothing: 55,
-  pressure: 55,
+  size: 2,
+  smoothing: 70,
+  pressure: 0,
 };
 
 /** The default fill for new shapes; user-changeable via the color swatch. */
@@ -60,10 +60,18 @@ function centerline(worldPoints: readonly (Center | PencilPoint)[], worldSize: n
   ).map((s) => s.point);
 }
 
-/** Canonical points -> quadratic SVG path (closed). */
-export function svgPathFromStroke(points: number[][]): string {
+/** Canonical points -> quadratic SVG path. Closed paths get a trailing Z. */
+export function svgPathFromStroke(points: number[][], closed = true): string {
   const len = points.length;
-  if (len < 4) return "";
+  if (len < 2) return "";
+  if (len === 2) {
+    const d = `M${f(points[0][0])},${f(points[0][1])} L${f(points[1][0])},${f(points[1][1])}`;
+    return closed ? `${d} Z` : d;
+  }
+  if (len === 3) {
+    const d = `M${f(points[0][0])},${f(points[0][1])} Q${f(points[1][0])},${f(points[1][1])} ${f(points[2][0])},${f(points[2][1])}`;
+    return closed ? `${d} Z` : d;
+  }
   let a = points[0];
   let b = points[1];
   const c = points[2];
@@ -73,7 +81,8 @@ export function svgPathFromStroke(points: number[][]): string {
     b = points[i + 1];
     d += `${f(avg(a[0], b[0]))},${f(avg(a[1], b[1]))} `;
   }
-  return d + "Z";
+  const out = d.trim();
+  return closed ? `${out} Z` : out;
 }
 
 function pointsBox(points: number[][], pad: number): Box {
@@ -101,17 +110,13 @@ function rawPointSpan(points: readonly (Center | PencilPoint)[]): { width: numbe
 /** Live-preview path `d` for the in-progress stroke (world coords). */
 export function pencilPreviewPath(
   worldPoints: readonly (Center | PencilPoint)[],
-  worldSize: number,
+  worldStrokeWidth: number,
   smoothing: number,
   pressure = 0,
   closed = false
 ): string {
   if (worldPoints.length < 2) return "";
-  return svgPathFromStroke(
-    closed
-      ? centerline(worldPoints, worldSize, smoothing, pressure)
-      : getStroke(pressurePoints(worldPoints, pressure), strokeOptions(worldSize, smoothing, pressure))
-  );
+  return svgPathFromStroke(centerline(worldPoints, Math.max(1, worldStrokeWidth), smoothing, pressure), closed);
 }
 
 /** Smallest bbox dimension (world units) below which a stroke is discarded. PRD §18. */
@@ -128,42 +133,39 @@ export function unionBox(a: Box, b: Box): Box {
 }
 
 export interface FilledStroke {
-  /** `<path …>` markup: closed region, literal fill + same-color round stroke
-   *  (no currentColor — PRD §12). */
+  /** `<path …>` markup. Open strokes are centerline paths; closed strokes are filled regions. */
   pathHtml: string;
-  /** The stroke's bbox (centerline padded by half the brush width), world coords. */
+  /** The path bbox padded by half the stroke width, world coords. */
   box: Box;
 }
 
 /**
  * One finished stroke as a CLOSED FILLED path + its world bbox, or null if too
- * small (a stray click). `worldSize` is the brush width already in world units.
- * The region you drew is filled — not just the pen ribbon. Multiple strokes
- * compose one motif by concatenating pathHtml and unioning boxes. PRD §12, §13.
+ * small (a stray click). `worldStrokeWidth` is already in world units.
  */
 export function strokeToFilledPath(
   worldPoints: readonly (Center | PencilPoint)[],
-  worldSize: number,
+  worldStrokeWidth: number,
   smoothing: number,
   fillColor: string,
+  strokeColor: string,
+  strokeWidth: number,
   pressure = 0,
   closed = false
 ): FilledStroke | null {
   if (worldPoints.length < 2) return null;
   const raw = rawPointSpan(worldPoints);
   if (raw.width < MIN_SIZE && raw.height < MIN_SIZE) return null;
-  const points = closed
-    ? centerline(worldPoints, worldSize, smoothing, pressure)
-    : getStroke(pressurePoints(worldPoints, pressure), strokeOptions(worldSize, smoothing, pressure));
-  const d = svgPathFromStroke(points);
+  const effectiveStrokeWidth = closed ? Math.max(0, strokeWidth) : Math.max(0.5, strokeWidth);
+  const smoothingSize = Math.max(1, worldStrokeWidth);
+  const points = centerline(worldPoints, smoothingSize, smoothing, pressure);
+  const d = svgPathFromStroke(points, closed);
   if (!d) return null;
-  const box = pointsBox(points, worldSize / 2);
+  const box = pointsBox(points, effectiveStrokeWidth / 2);
   if (box.width < MIN_SIZE && box.height < MIN_SIZE) return null;
-  // Open strokes are pressure-aware filled ink ribbons. Closed strokes fill the
-  // enclosed outline the user drew, with a same-color stroke to keep the edge.
   const pathHtml = closed
-    ? `<path d="${d}" fill="${fillColor}" stroke="${fillColor}" stroke-width="${f(worldSize)}" stroke-linejoin="round" stroke-linecap="round" />`
-    : `<path d="${d}" fill="${fillColor}" stroke="none" />`;
+    ? `<path d="${d}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${f(effectiveStrokeWidth)}" stroke-linejoin="round" stroke-linecap="round" />`
+    : `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${f(effectiveStrokeWidth)}" stroke-linejoin="round" stroke-linecap="round" />`;
   return { pathHtml, box };
 }
 
@@ -176,13 +178,15 @@ export interface DrawnMotif {
 /** Convenience: a single stroke straight into a normalized Motif. */
 export function createDrawnMotif(
   worldPoints: readonly (Center | PencilPoint)[],
-  worldSize: number,
+  worldStrokeWidth: number,
   smoothing: number,
   fillColor: string,
+  strokeColor = fillColor,
+  strokeWidth = worldStrokeWidth,
   pressure = 0,
   closed = false
 ): DrawnMotif | null {
-  const sp = strokeToFilledPath(worldPoints, worldSize, smoothing, fillColor, pressure, closed);
+  const sp = strokeToFilledPath(worldPoints, worldStrokeWidth, smoothing, fillColor, strokeColor, strokeWidth, pressure, closed);
   if (!sp) return null;
   const c = boxCenter(sp.box);
   return {

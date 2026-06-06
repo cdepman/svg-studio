@@ -72,6 +72,19 @@ describe("App layer interactions", () => {
     expect(canvasLayerIds()).toHaveLength(1);
   });
 
+  it("Design mode exposes the full layer stack so every motif is reachable", () => {
+    // Two layers, then back to Design: both layers must be selectable (not just
+    // one composition). The active layer's parts are shown inline beneath it.
+    setMode("arrange");
+    newLayer();
+    setMode("design");
+    const layerRows = () => Array.from(container.querySelectorAll(".layer-row:not(.part-row)"));
+    expect(layerRows().length).toBe(2); // both layers reachable
+    // selecting the other layer makes it the active (selected) one
+    act(() => layerRows()[1].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(layerRows()[1].className).toContain("is-selected");
+  });
+
   it("New Layer adds a second layer and selects it", () => {
     setMode("arrange");
     newLayer();
@@ -360,8 +373,7 @@ describe("App layer interactions", () => {
   const panZoom = () => Array.from(canvas().children).find((el) => el.tagName.toLowerCase() === "g")!;
 
   it("Pencil creates a selected radial-repeat layer for each stroke", () => {
-    // Pencil is a Design tool; assert via the canvas (mode-independent) since the
-    // panel shows the motif Composition in Design, not the layer list.
+    // Pencil is a Design tool; assert via the canvas (mode-independent).
     click(titleBtn("Pencil"));
     drawStroke([200, 200], [260, 210], [300, 260], [210, 300]);
     expect(canvasLayerIds()).toHaveLength(2);

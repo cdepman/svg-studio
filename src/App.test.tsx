@@ -10,9 +10,9 @@ describe("App", () => {
     expect(html).toContain("canvas-svg");
     expect(html).toContain("mode-switch");
     expect(html).toContain("Radial Repeat 1");
-    // default mode is Design: the panel shows the motif Composition + the canvas
-    // focuses the active motif (no gizmo)
-    expect(html).toContain("Composition");
+    // default mode is Design: a unified Layers panel + the canvas focuses the
+    // active motif (no gizmo)
+    expect(html).toContain("Layers");
     expect(html).toContain("design-mode view-context");
     // default count 12 -> 12 instances, motif def is per-layer
     expect((html.match(/class="instance"/g) ?? []).length).toBe(12);

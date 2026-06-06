@@ -80,7 +80,7 @@ export const ANIMATION_PRESETS: AnimationPreset[] = [
       individualSpin: { enabled: true, periodSeconds: 11.6, direction: "ccw", stagger: false },
       scalePulse: { enabled: true, periodSeconds: 3, amount: 0.16, stagger: false },
       radialPulse: { enabled: true, periodSeconds: 20.9, amount: 85, stagger: false },
-      wave: { enabled: true, periodSeconds: 1.7, amount: 40, frequency: 10.5, direction: "ccw", stagger: true },
+      wave: { enabled: true, periodSeconds: 1.7, amount: 40, frequency: 11, direction: "ccw", stagger: true },
     },
     params: { count: 34, radiusOffset: 230, sourceRotation: 150, orientationMode: "rotateWithCircle" },
   }),

@@ -52,6 +52,7 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       onCommitPartTransform={() => {}}
       onCommitPartTransforms={() => {}}
       onDuplicatePart={() => {}}
+      onPickLayer={() => false}
       onExitPart={() => {}}
       motionCss=""
       motionPath={null}
@@ -59,8 +60,10 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       motionAnchor={null}
       animationsMoving={false}
       tool="select"
-      pencil={{ size: 18, smoothing: 55, pressure: 55 }}
+      pencil={{ size: 2, smoothing: 70, pressure: 0 }}
       fillColor="#7c93ff"
+      strokeColor="#181818"
+      strokeWidth={2}
       onDrawCommit={() => {}}
       viewport={{ tx: 0, ty: 0, s: 1 }}
       dragging={false}
@@ -69,6 +72,7 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       onLayerPointerDown={() => {}}
       onMarqueeSelect={() => {}}
       onMotionPathDrawn={() => {}}
+      onSelectLayersByRect={() => false}
       onResizePointerDown={() => {}}
       onRotatePointerDown={() => {}}
       onZoom={() => {}}
