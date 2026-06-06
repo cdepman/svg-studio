@@ -60,6 +60,16 @@ export const Icon = {
   ungroup: (p: IconProps = {}) => svg(<><rect x={3} y={3} width={6} height={6} rx={1} /><rect x={15} y={3} width={6} height={6} rx={1} /><rect x={9} y={15} width={6} height={6} rx={1} /></>, p),
   reset: (p: IconProps = {}) => svg(<path d="M4 12a8 8 0 108-8 8 8 0 00-6 2.7L4 9M4 4v4h4" />, p),
   cursor: (p: IconProps = {}) => svg(<path d="M5 3l6 16 2.2-6.2L19 11z" fill="currentColor" stroke="currentColor" strokeWidth={1.2} />, p),
+  hand: (p: IconProps = {}) =>
+    svg(
+      <>
+        <path d="M18 11V6a2 2 0 0 0-4 0" />
+        <path d="M14 10V4a2 2 0 0 0-4 0v2" />
+        <path d="M10 10.5V6a2 2 0 0 0-4 0v8" />
+        <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+      </>,
+      p
+    ),
   eyedropper: (p: IconProps = {}) =>
     svg(
       <>

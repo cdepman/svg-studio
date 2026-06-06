@@ -148,10 +148,8 @@ export function effectsCss(layer: Layer, playing: boolean): string {
   animation-play-state: ${playState(playing)};
 }
 @keyframes ${klass}-pulse {
-  0%, 100% { transform: scale(1); }
-  25% { transform: scale(${num(peak)}); }
-  50% { transform: scale(1); }
-  75% { transform: scale(${num(trough)}); }
+  0%, 100% { transform: scale(${num(peak)}); }
+  50% { transform: scale(${num(trough)}); }
 }`);
   }
 

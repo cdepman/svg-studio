@@ -1,54 +1,58 @@
 // Pencil tool: raw pointer points -> a smooth, CLOSED, FILLED region -> a
-// normalized Motif. We use perfect-freehand's `getStrokePoints` to streamline
-// the centerline (no hand-rolled smoothing), then build a closed quadratic path
-// from it and FILL the interior (plus a same-color round stroke so thin shapes
-// still have body). This fills the object you draw, not just the pen ribbon.
+// normalized Motif. We use perfect-freehand to generate the pressure-aware
+// filled outline, then build a closed quadratic SVG path from it.
 //
 // A drawn shape is NOT a special case — it becomes a Motif exactly like an
 // imported SVG (centered on its bbox via anchorX/anchorY). PRD §5, §13, §14.
-import { getStrokePoints } from "perfect-freehand";
+import { getStroke } from "perfect-freehand";
 import { singlePart } from "./parts";
 import type { Box, Center, Motif } from "../types";
+
+export interface PencilPoint extends Center {
+  /** 0..1 pointer pressure, defaulting to 0.5 when unavailable. */
+  pressure: number;
+}
 
 export interface PencilSettings {
   /** Brush width in SCREEN px (converted to world units at draw time). */
   size: number;
   /** 0..100 — maps to perfect-freehand streamline + smoothing. PRD §11. */
   smoothing: number;
+  /** 0..100 — 0 ignores pressure; 100 gives a strong width response. */
+  pressure: number;
 }
 
 export const DEFAULT_PENCIL: PencilSettings = {
   size: 18,
   smoothing: 55,
+  pressure: 55,
 };
 
 /** The default fill for new shapes; user-changeable via the color swatch. */
 export const DEFAULT_FILL = "#7c93ff";
 
 /** Map the single 0..100 smoothing control to perfect-freehand options. PRD §11. */
-function strokeOptions(size: number, smoothing: number) {
+function strokeOptions(size: number, smoothing: number, pressure = 0) {
   const t = Math.max(0, Math.min(1, smoothing / 100));
+  const p = Math.max(0, Math.min(1, pressure / 100));
   return {
     size,
     // more = more aggressively follows a smoothed path / rounder corners
     streamline: 0.2 + t * 0.65,
     smoothing: 0.3 + t * 0.65,
-    thinning: 0, // V1: uniform width (no pressure)
+    thinning: p * 0.75,
     simulatePressure: false,
     last: true,
   };
 }
 
+function pressurePoints(worldPoints: readonly (Center | PencilPoint)[], pressureSensitivity: number): [number, number, number][] {
+  const usePressure = pressureSensitivity > 0;
+  return worldPoints.map((p) => [p.x, p.y, usePressure ? ("pressure" in p ? p.pressure : 0.5) : 0.5]);
+}
+
 const avg = (a: number, b: number) => (a + b) / 2;
 const f = (n: number) => Math.round(n * 100) / 100;
-
-/** Streamlined centerline points for the stroke (perfect-freehand smoothing). */
-function centerline(worldPoints: Center[], worldSize: number, smoothing: number): number[][] {
-  return getStrokePoints(
-    worldPoints.map((p) => [p.x, p.y]),
-    strokeOptions(worldSize, smoothing)
-  ).map((s) => s.point);
-}
 
 /** Canonical perfect-freehand outline -> quadratic SVG path (closed). */
 export function svgPathFromStroke(points: number[][]): string {
@@ -77,14 +81,26 @@ function pointsBox(points: number[][], pad: number): Box {
   return { x: minX - pad, y: minY - pad, width: maxX - minX + 2 * pad, height: maxY - minY + 2 * pad };
 }
 
+function rawPointSpan(points: readonly (Center | PencilPoint)[]): { width: number; height: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return { width: maxX - minX, height: maxY - minY };
+}
+
 /** Live-preview path `d` for the in-progress stroke (world coords). */
 export function pencilPreviewPath(
-  worldPoints: Center[],
+  worldPoints: readonly (Center | PencilPoint)[],
   worldSize: number,
-  smoothing: number
+  smoothing: number,
+  pressure = 0
 ): string {
   if (worldPoints.length < 2) return "";
-  return svgPathFromStroke(centerline(worldPoints, worldSize, smoothing));
+  return svgPathFromStroke(getStroke(pressurePoints(worldPoints, pressure), strokeOptions(worldSize, smoothing, pressure)));
 }
 
 /** Smallest bbox dimension (world units) below which a stroke is discarded. PRD §18. */
@@ -115,16 +131,19 @@ export interface FilledStroke {
  * compose one motif by concatenating pathHtml and unioning boxes. PRD §12, §13.
  */
 export function strokeToFilledPath(
-  worldPoints: Center[],
+  worldPoints: readonly (Center | PencilPoint)[],
   worldSize: number,
   smoothing: number,
-  fillColor: string
+  fillColor: string,
+  pressure = 0
 ): FilledStroke | null {
   if (worldPoints.length < 2) return null;
-  const cl = centerline(worldPoints, worldSize, smoothing);
-  const d = svgPathFromStroke(cl);
+  const raw = rawPointSpan(worldPoints);
+  if (raw.width < MIN_SIZE && raw.height < MIN_SIZE) return null;
+  const outline = getStroke(pressurePoints(worldPoints, pressure), strokeOptions(worldSize, smoothing, pressure));
+  const d = svgPathFromStroke(outline);
   if (!d) return null;
-  const box = pointsBox(cl, worldSize / 2);
+  const box = pointsBox(outline, worldSize / 2);
   if (box.width < MIN_SIZE && box.height < MIN_SIZE) return null;
   // Fill the interior; the same-color round stroke gives thin shapes body and
   // smooth edges. Single literal color, no currentColor.
@@ -142,12 +161,13 @@ export interface DrawnMotif {
 
 /** Convenience: a single stroke straight into a normalized Motif. */
 export function createDrawnMotif(
-  worldPoints: Center[],
+  worldPoints: readonly (Center | PencilPoint)[],
   worldSize: number,
   smoothing: number,
-  fillColor: string
+  fillColor: string,
+  pressure = 0
 ): DrawnMotif | null {
-  const sp = strokeToFilledPath(worldPoints, worldSize, smoothing, fillColor);
+  const sp = strokeToFilledPath(worldPoints, worldSize, smoothing, fillColor, pressure);
   if (!sp) return null;
   const c = boxCenter(sp.box);
   return {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { motifFillColor, recolorMarkup } from "./recolor";
+import { motifFillColor, recolorMarkup, setStrokeColorMarkup, setStrokeWidthMarkup } from "./recolor";
 import { recolorMotif } from "./parts";
 import type { Motif } from "../types";
 
@@ -56,5 +56,26 @@ describe("recolor", () => {
     expect(out).not.toContain("stroke:black"); // outline recolored, not left black
     expect(out).toContain("fill:#ff0000"); // near-black fill recolored
     expect(out).toContain('fill="#ff0000"'); // the no-fill path gets the color
+  });
+
+  it("authors a border on a filled shape without touching its fill", () => {
+    const filled = '<path d="M0 0" fill="#abc"/>';
+    const out = setStrokeWidthMarkup(setStrokeColorMarkup(filled, "#f00"), 3);
+    expect(out).toContain('fill="#abc"'); // fill untouched
+    expect(out).toContain('stroke="#f00"'); // border color added
+    expect(out).toContain('stroke-width="3"'); // border thickness added
+  });
+
+  it("border color overrides an existing/none stroke and never mangles stroke-width or fill", () => {
+    const outline = '<path fill="none" stroke="#000" stroke-width="1"/>';
+    expect(setStrokeColorMarkup(outline, "#0a0")).toContain('stroke="#0a0"');
+    expect(setStrokeColorMarkup(outline, "#0a0")).toContain('fill="none"'); // none preserved
+    expect(setStrokeColorMarkup(outline, "#0a0")).toContain('stroke-width="1"'); // width untouched
+
+    const styled = '<rect style="fill:#111;stroke:#222;stroke-width:2"/>';
+    const out = setStrokeColorMarkup(styled, "#fff");
+    expect(out).toContain("fill:#111"); // fill untouched
+    expect(out).toContain("stroke:#fff"); // stroke recolored
+    expect(out).toContain("stroke-width:2"); // width-in-style not clobbered
   });
 });

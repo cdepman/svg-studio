@@ -5,7 +5,7 @@
 // motif's rendered `innerHtml` is always derived from the parts (defs preamble +
 // visible, transformed, recolored parts), so every existing consumer (LayerArt,
 // export, thumbnail) is unchanged.
-import { recolorMarkup } from "./recolor";
+import { recolorMarkup, setStrokeColorMarkup, setStrokeWidthMarkup } from "./recolor";
 import { IDENTITY_PART_TRANSFORM, type Box, type Motif, type MotifPart, type PartTransform } from "../types";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -40,9 +40,21 @@ export function partTransformAttr(t: PartTransform, cx: number, cy: number): str
   );
 }
 
-/** Rendered markup for one part: base geometry + color override + transform. */
+/** A part's painted geometry (no transform wrapper): base markup + fill/border
+ *  overrides. The `fill` override paints fill *and* stroke (most imported art is
+ *  outline-heavy); an explicit `stroke` / `strokeWidth` override then takes
+ *  precedence for the border. Shared by `renderPart` and the live canvas. */
+export function paintedPartMarkup(part: MotifPart): string {
+  let inner = part.baseMarkup;
+  if (part.fill) inner = recolorMarkup(inner, part.fill);
+  if (part.stroke) inner = setStrokeColorMarkup(inner, part.stroke);
+  if (part.strokeWidth != null) inner = setStrokeWidthMarkup(inner, part.strokeWidth);
+  return inner;
+}
+
+/** Rendered markup for one part: painted geometry + its transform. */
 export function renderPart(part: MotifPart): string {
-  const inner = part.fill ? recolorMarkup(part.baseMarkup, part.fill) : part.baseMarkup;
+  const inner = paintedPartMarkup(part);
   const t = partTransformAttr(part.transform, part.cx, part.cy);
   return t ? `<g transform="${t}">${inner}</g>` : inner;
 }
@@ -75,6 +87,14 @@ export function setPartVisible(motif: Motif, partId: string, visible: boolean): 
 
 export function setPartFill(motif: Motif, partId: string, fill: string): Motif {
   return updatePart(motif, partId, (p) => ({ ...p, fill }));
+}
+
+export function setPartStroke(motif: Motif, partId: string, stroke: string): Motif {
+  return updatePart(motif, partId, (p) => ({ ...p, stroke }));
+}
+
+export function setPartStrokeWidth(motif: Motif, partId: string, strokeWidth: number): Motif {
+  return updatePart(motif, partId, (p) => ({ ...p, strokeWidth }));
 }
 
 export function setPartTransform(motif: Motif, partId: string, transform: PartTransform): Motif {
@@ -120,6 +140,21 @@ export function partColor(part: MotifPart): string | null {
   return m && m[1].trim().toLowerCase() !== "none" ? m[1].trim() : null;
 }
 
+/** The part's current border color override, or its imported stroke color. */
+export function partStrokeColor(part: MotifPart): string | null {
+  if (part.stroke) return part.stroke;
+  const m = part.baseMarkup.match(/stroke="([^"]+)"/) ?? part.baseMarkup.match(/stroke\s*:\s*([^;"'}]+)/);
+  return m && m[1].trim().toLowerCase() !== "none" ? m[1].trim() : null;
+}
+
+/** The part's current border thickness override, or its imported stroke-width. */
+export function partStrokeWidth(part: MotifPart): number | null {
+  if (part.strokeWidth != null) return part.strokeWidth;
+  const m = part.baseMarkup.match(/stroke-width="([^"]+)"/) ?? part.baseMarkup.match(/stroke-width\s*:\s*([^;"'}]+)/);
+  const v = m ? parseFloat(m[1]) : NaN;
+  return Number.isFinite(v) ? v : null;
+}
+
 /**
  * Recolor an entire motif to one color: every part gets the override (and the
  * defs preamble is recolored for gradient refs). Used by the layer-level swatch.
@@ -132,6 +167,22 @@ export function recolorMotif(motif: Motif, color: string): Motif {
     );
   }
   return { ...motif, innerHtml: recolorMarkup(motif.innerHtml, color) };
+}
+
+/** Set the border color on every part (or the whole markup for a part-less motif). */
+export function restrokeMotif(motif: Motif, color: string): Motif {
+  if (motif.parts) {
+    return motifWithParts(motif, motif.parts.map((p) => ({ ...p, stroke: color })));
+  }
+  return { ...motif, innerHtml: setStrokeColorMarkup(motif.innerHtml, color) };
+}
+
+/** Set the border thickness on every part (or the whole markup for a part-less motif). */
+export function setMotifStrokeWidth(motif: Motif, width: number): Motif {
+  if (motif.parts) {
+    return motifWithParts(motif, motif.parts.map((p) => ({ ...p, strokeWidth: width })));
+  }
+  return { ...motif, innerHtml: setStrokeWidthMarkup(motif.innerHtml, width) };
 }
 
 /** A single part wrapping arbitrary markup (drawn shapes). */

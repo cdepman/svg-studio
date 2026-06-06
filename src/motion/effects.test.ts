@@ -91,8 +91,10 @@ describe("effects: CSS emission", () => {
       radialPulse: { ...allOff.radialPulse, enabled: true, amount: 60, periodSeconds: 8 },
     }), true);
     expect(css).toContain("animation: motion-L1-pulse 4s");
-    expect(css).toContain("transform: scale(1.5)");
-    expect(css).toContain("transform: scale(0.5)");
+    expect(css).toContain("transform: scale(1.5)"); // peak
+    expect(css).toContain("transform: scale(0.5)"); // trough
+    // Smooth grow↔shrink: no neutral-size keyframe, so it never stops mid-cycle.
+    expect(css).not.toContain("transform: scale(1);");
     expect(css).toContain("animation: motion-L1-radial 8s");
     // Radiate = a clean outward bloom and return (no inward half, no rest-point stutter).
     expect(css).toContain("translateX(var(--radial-amt, 0px))");

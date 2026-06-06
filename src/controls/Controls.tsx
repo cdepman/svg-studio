@@ -42,6 +42,14 @@ interface ControlsProps {
   onDeleteAnimation: () => void;
   onUpdateAnimation: (patch: (animation: CenterPathAnimation) => CenterPathAnimation) => void;
   onUpdateEffects: (patch: (e: LayerEffects) => LayerEffects) => void;
+  // Fill & border (Design mode "Style" panel).
+  styleEditable: boolean;
+  fillValue: string;
+  borderColorValue: string;
+  borderWidthValue: number;
+  onSetFill: (color: string) => void;
+  onSetBorderColor: (color: string) => void;
+  onSetBorderWidth: (width: number) => void;
   motifLibrary: MotifLibraryItem[];
   onApplyLibraryMotif: (item: MotifLibraryItem) => void | Promise<void>;
   onAddLibraryMotif: (item: MotifLibraryItem) => void | Promise<void>;
@@ -277,6 +285,15 @@ function ArrangeInspector(props: ControlsProps) {
 }
 
 // Design = edit the atomic unit (the motif), with the repeat as a live preview.
+function ColorSwatch({ value, onChange }: { value: string; onChange: (c: string) => void }) {
+  const hex = /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#000000";
+  return (
+    <label className="part-swatch" style={{ background: value }}>
+      <input type="color" value={hex} onChange={(e) => onChange(e.target.value)} />
+    </label>
+  );
+}
+
 function DesignInspector(props: ControlsProps) {
   return (
     <div className="insp-scroll scroll">
@@ -288,6 +305,22 @@ function DesignInspector(props: ControlsProps) {
           onChange={props.onSetDesignView}
         />
       </section>
+      {props.styleEditable && (
+        <section className="group">
+          <h2 className="group-title">Style <span className="gt-line" /></h2>
+          <div className="style-row">
+            <span className="style-label">Fill</span>
+            <ColorSwatch value={props.fillValue} onChange={props.onSetFill} />
+          </div>
+          <div className="style-row">
+            <span className="style-label">Border</span>
+            <ColorSwatch value={props.borderColorValue} onChange={props.onSetBorderColor} />
+          </div>
+          <ValueSlider label="Border thickness" value={props.borderWidthValue} min={0} max={20} step={0.5}
+            fmt={(v) => (v === 0 ? "none" : v.toFixed(1))} onChange={props.onSetBorderWidth} />
+          <FxLabel>Selected part(s), or the whole motif when none is picked. 0 = no border.</FxLabel>
+        </section>
+      )}
       <section className="group">
         <h2 className="group-title">Motif <span className="gt-line" /></h2>
         <div className="empty-note" style={{ textAlign: "left", padding: "2px 2px 6px" }}>

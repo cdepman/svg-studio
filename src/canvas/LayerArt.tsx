@@ -21,7 +21,7 @@ import { PROXY_CAP } from "../config";
 import { animationReachPadding, motionClassName } from "../motion/centerPath";
 import { effectsReachPadding, instanceEffectStyle, isLayerAnimated } from "../motion/effects";
 import { recolorMarkup } from "../motif/recolor";
-import { partTransformAttr } from "../motif/parts";
+import { partTransformAttr, paintedPartMarkup } from "../motif/parts";
 import type { Layer } from "../types";
 
 interface LayerArtProps {
@@ -132,7 +132,7 @@ function LayerArtImpl({ layer, proxy }: LayerArtProps) {
                   key={part.id}
                   data-part-render={part.id}
                   transform={partTransformAttr(part.transform, part.cx, part.cy) ?? "translate(0 0)"}
-                  dangerouslySetInnerHTML={{ __html: part.fill ? recolorMarkup(part.baseMarkup, part.fill) : part.baseMarkup }}
+                  dangerouslySetInnerHTML={{ __html: paintedPartMarkup(part) }}
                 />
               ))}
           </g>

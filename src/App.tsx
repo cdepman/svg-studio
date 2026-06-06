@@ -16,16 +16,21 @@ import { Timeline } from "./ui/Timeline";
 import { DEFAULT_MOTIF_SVG } from "./defaultMotif";
 import { importSvgFromFile, importSvgFromText } from "./motif/importSvg";
 import { MOTIF_LIBRARY, type MotifLibraryItem } from "./motifLibrary";
-import { boxCenter, DEFAULT_FILL, DEFAULT_PENCIL, strokeToFilledPath, unionBox, type PencilSettings } from "./motif/drawnPath";
+import { boxCenter, DEFAULT_FILL, DEFAULT_PENCIL, strokeToFilledPath, type PencilPoint, type PencilSettings } from "./motif/drawnPath";
 import { motifFillColor } from "./motif/recolor";
 import {
-  appendPart,
   duplicatePart,
   newPartId,
   partColor,
+  partStrokeColor,
+  partStrokeWidth,
   recolorMotif,
   reorderParts,
+  restrokeMotif,
+  setMotifStrokeWidth,
   setPartFill,
+  setPartStroke,
+  setPartStrokeWidth,
   setPartTransform,
   setPartTransforms,
   setPartVisible,
@@ -111,12 +116,8 @@ const DEFAULT_PARAMS: RepeatParams = {
   seamBlend: 2, // tuck depth: how many copies a petal laps. Small + explicit.
 };
 
-// A drawn shape starts as a single, un-repeated instance sitting where it was
-// drawn (count 1, radius 0). "Create Radial Repeat" turns it into a repeat. PRD §15A.
-// tuck stays ON (like imported layers) so raising the count via the slider —
-// not just the radialize button — hides the wrap seam. (At count 1 the two-half
-// render just draws the single shape, so it's harmless.)
-const DRAWN_PARAMS: RepeatParams = { ...DEFAULT_PARAMS, count: 1, radiusOffset: 0 };
+// Pencil strokes become radial-repeat layers immediately: draw -> tweak repeat.
+const DRAWN_PARAMS: RepeatParams = { ...DEFAULT_PARAMS };
 const IMPORT_REPEAT_COUNT = 8;
 const IMPORT_TARGET_MOTIF_SIZE = 150;
 
@@ -172,11 +173,15 @@ export default function App() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  const [tool, setTool] = useState<"select" | "pencil">("select");
+  const [tool, setTool] = useState<"select" | "pencil" | "hand">("select");
   const [pencil, setPencil] = useState<PencilSettings>(DEFAULT_PENCIL);
   // Current fill: the default for new shapes (no selection), or the selected
   // layer's color when one is selected. Always available via the swatch.
   const [fillColor, setFillColor] = useState(DEFAULT_FILL);
+  // Working border (stroke) color + thickness: the values the Style panel applies
+  // to the selected part(s)/layer, and remembers as the default.
+  const [strokeColor, setStrokeColor] = useState("#1a1a1a");
+  const [strokeWidth, setStrokeWidth] = useState(2);
   // The individual component being edited (double-click a copy). Its layer is
   // the sole selection while editing.
   const [componentEdit, setComponentEdit] = useState<{ layerId: string; index: number } | null>(null);
@@ -192,9 +197,6 @@ export default function App() {
   const [playTime, setPlayTime] = useState(0);
   const newLayerCount = useRef(1);
   const drawnCount = useRef(0);
-  // The drawn layer that pencil strokes currently append to (multi-stroke shape).
-  // Reset by "New Shape", switching tools, or radializing. PRD §8 (multi-line).
-  const currentDrawingRef = useRef<string | null>(null);
 
   const scene = useScene();
   const { viewport, setViewport, zoomAt, panBy } = useViewport({ tx: 0, ty: 0, s: 1 });
@@ -230,11 +232,16 @@ export default function App() {
   const canUngroupSelection = groups.some((g) => g.layerIds.some((id) => selectedSet.has(id)));
   const motionCss = useMemo(
     () => {
+      // Design mode edits the STATIC unit: emit no motion/effect CSS so every copy
+      // sits at its rest pose. Otherwise a paused animation (especially composite
+      // spin, which rotates the whole ring) freezes the motif mid-cycle while the
+      // part-edit overlay stays at rest — so the gizmo/marquee no longer line up.
+      if (mode === "design") return "";
       const isPlaying = (l: Layer) => playingIds.has(l.id) && !dragging;
       const visible = layers.filter((l) => l.visible);
       return [centerPathStyles(visible, isPlaying), effectsStyles(visible, isPlaying)].filter(Boolean).join("\n");
     },
-    [layers, playingIds, dragging]
+    [layers, playingIds, dragging, mode]
   );
   const primaryMotionPath = useMemo(() => {
     if (!primary?.animation || primary.animation.type !== "centerPath") return null;
@@ -294,7 +301,17 @@ export default function App() {
   const docRef = useRef({ layers, groups, selectedIds, primaryId, dragging, tool, componentEdit, partEdit, mode });
   docRef.current = { layers, groups, selectedIds, primaryId, dragging, tool, componentEdit, partEdit, mode };
 
-  const commitDocument = (update: (doc: DocumentState) => DocumentState) => {
+  // Continuous edits (dragging a color picker or a slider) fire many commits in a
+  // row. A `coalesceKey` folds a rapid run of same-key commits into ONE undo step
+  // (the first captures the pre-edit state; the rest just replace the present), so
+  // undo jumps back past the whole gesture instead of replaying every intermediate.
+  const coalesceRef = useRef<{ key: string | null; t: number }>({ key: null, t: 0 });
+  const COALESCE_MS = 800;
+  const commitDocument = (update: (doc: DocumentState) => DocumentState, coalesceKey?: string) => {
+    const now = Date.now();
+    const coalesce =
+      coalesceKey != null && coalesceKey === coalesceRef.current.key && now - coalesceRef.current.t < COALESCE_MS;
+    coalesceRef.current = { key: coalesceKey ?? null, t: now };
     setHistory((h) => {
       const next = update(h.present);
       if (
@@ -305,18 +322,18 @@ export default function App() {
         return h;
       }
       return {
-        past: [...h.past, h.present].slice(-HISTORY_LIMIT),
+        past: coalesce ? h.past : [...h.past, h.present].slice(-HISTORY_LIMIT),
         present: next,
         future: [],
       };
     });
   };
 
-  const updateLayers = (action: StateAction<Layer[]>) => {
+  const updateLayers = (action: StateAction<Layer[]>, coalesceKey?: string) => {
     commitDocument((doc) => {
       const nextLayers = resolveAction(action, doc.layers);
       return nextLayers === doc.layers ? doc : { ...doc, layers: nextLayers };
-    });
+    }, coalesceKey);
   };
 
   const updateSelection = (action: StateAction<string[]>) => {
@@ -604,7 +621,8 @@ export default function App() {
                 updatedAt: Date.now(),
               }
             : l
-        )
+        ),
+        "fill"
       );
       return;
     }
@@ -614,14 +632,16 @@ export default function App() {
           l.id === componentEdit.layerId
             ? { ...l, components: { ...l.components, [componentEdit.index]: { ...l.components[componentEdit.index], fill: color } }, updatedAt: Date.now() }
             : l
-        )
+        ),
+        "fill"
       );
       return;
     }
     const ids = editableIdsRef.current;
     if (ids.size > 0) {
       updateLayers((ls) =>
-        ls.map((l) => (ids.has(l.id) ? { ...l, motif: recolorMotif(l.motif, color), updatedAt: Date.now() } : l))
+        ls.map((l) => (ids.has(l.id) ? { ...l, motif: recolorMotif(l.motif, color), updatedAt: Date.now() } : l)),
+        "fill"
       );
     }
   }
@@ -638,6 +658,46 @@ export default function App() {
       /* user cancelled */
     }
   }
+
+  // --- Border (stroke) ---
+  // Apply a motif edit to the selected part(s), or to the whole motif of every
+  // editable layer when nothing finer is selected (mirrors applyColor's targeting).
+  function applyMotifEdit(partUpdate: (m: Motif, id: string) => Motif, motifUpdate: (m: Motif) => Motif, coalesceKey: string) {
+    if (partEdit?.partIds.length) {
+      const ids = new Set(partEdit.partIds);
+      updateLayers((ls) =>
+        ls.map((l) =>
+          l.id === partEdit.layerId
+            ? {
+                ...l,
+                motif: l.motif.parts
+                  ? l.motif.parts.reduce((m, part) => (ids.has(part.id) ? partUpdate(m, part.id) : m), l.motif)
+                  : l.motif,
+                updatedAt: Date.now(),
+              }
+            : l
+        ),
+        coalesceKey
+      );
+      return;
+    }
+    const ids = editableIdsRef.current;
+    if (ids.size > 0) {
+      updateLayers((ls) => ls.map((l) => (ids.has(l.id) ? { ...l, motif: motifUpdate(l.motif), updatedAt: Date.now() } : l)), coalesceKey);
+    }
+  }
+  function applyStrokeColor(color: string) {
+    setStrokeColor(color);
+    applyMotifEdit((m, id) => setPartStroke(m, id, color), (m) => restrokeMotif(m, color), "border-color");
+  }
+  function applyStrokeWidth(width: number) {
+    setStrokeWidth(width);
+    applyMotifEdit((m, id) => setPartStrokeWidth(m, id, width), (m) => setMotifStrokeWidth(m, width), "border-width");
+  }
+  // Current border values shown in the Style panel: the single edited part's, else
+  // the working defaults.
+  const borderColorValue = editedPart ? partStrokeColor(editedPart) ?? strokeColor : strokeColor;
+  const borderWidthValue = editedPart ? partStrokeWidth(editedPart) ?? strokeWidth : strokeWidth;
 
   // --- Selection actions ---
   const selectSingle = (id: string, additive = false) => {
@@ -874,40 +934,10 @@ export default function App() {
     }
   }
 
-  // Pencil commit: a finished stroke becomes a filled path. The first stroke
-  // creates a plain single-instance drawn layer (no repeat yet); subsequent
-  // strokes APPEND to it so you can compose a shape from several lines. PRD §8,§15A.
-  function onDrawCommit(points: Center[]) {
-    const sp = strokeToFilledPath(points, pencil.size / viewport.s, pencil.smoothing, fillColor);
+  // Pencil commit: one finished stroke becomes one selected radial-repeat layer.
+  function onDrawCommit(points: PencilPoint[]) {
+    const sp = strokeToFilledPath(points, pencil.size / viewport.s, pencil.smoothing, fillColor, pencil.pressure);
     if (!sp) return; // tiny stroke / stray click — silently ignored. PRD §18.
-
-    const curId = currentDrawingRef.current;
-    const cur = curId ? docRef.current.layers.find((l) => l.id === curId) : null;
-    if (cur) {
-      const box = unionBox(cur.motif.box, sp.box);
-      const c = boxCenter(box);
-      updateLayers((ls) =>
-        ls.map((l) =>
-          l.id === curId
-            ? {
-                ...l,
-                // append the new path; re-anchor + re-center on the union bbox so
-                // every stroke stays where it was drawn. PRD §13.
-                motif: {
-                  ...appendPart(l.motif, singlePart(sp.pathHtml, `Shape ${l.motif.weight + 1}`, sp.box)),
-                  box,
-                  anchorX: c.x,
-                  anchorY: c.y,
-                  weight: l.motif.weight + 1,
-                },
-                center: c,
-                updatedAt: Date.now(),
-              }
-            : l
-        )
-      );
-      return;
-    }
 
     drawnCount.current += 1;
     const c = boxCenter(sp.box);
@@ -925,26 +955,18 @@ export default function App() {
       params: DRAWN_PARAMS,
       center: c,
     });
-    currentDrawingRef.current = layer.id;
     commitDocument((doc) => ({ ...doc, layers: [...doc.layers, layer], selectedIds: [layer.id] }));
   }
 
-  /** End the current drawing so the next stroke starts a fresh shape. */
-  function finishDrawing() {
-    currentDrawingRef.current = null;
-  }
-  /** Switch tools, always ending any in-progress drawing. */
-  function switchTool(next: "select" | "pencil") {
-    currentDrawingRef.current = null;
+  /** Switch tools. Active strokes are owned/cancelled by the canvas pointer lifecycle. */
+  function switchTool(next: "select" | "pencil" | "hand") {
     setTool(next);
   }
 
-  // "Create Radial Repeat": turn a single-instance layer (e.g. a fresh drawing)
-  // into a repeat using the default count/radius. PRD §15A.
+  // "Create Radial Repeat": supports any legacy/imported count-1 layer.
   const canRadialize = !!primary && primary.params.count === 1;
   function radializePrimary() {
     if (!primaryId) return;
-    finishDrawing();
     updateLayers((ls) =>
       ls.map((l) =>
         l.id === primaryId
@@ -1152,7 +1174,6 @@ export default function App() {
         return;
       }
       if (e.key === "Escape" && docRef.current.tool === "pencil") {
-        currentDrawingRef.current = null;
         setTool("select");
         return;
       }
@@ -1202,6 +1223,10 @@ export default function App() {
         if (id) onMove(id, e.shiftKey ? "back" : "backward");
         return;
       }
+      // Tool shortcuts (no modifier): V select, H hand/pan, P pencil (Design only).
+      if (!mod && e.key.toLowerCase() === "v") { switchTool("select"); return; }
+      if (!mod && e.key.toLowerCase() === "h") { switchTool("hand"); return; }
+      if (!mod && e.key.toLowerCase() === "p" && docRef.current.mode === "design") { switchTool("pencil"); return; }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1363,24 +1388,27 @@ export default function App() {
         />
 
         <div
-          className={`canvas-area${mode === "animate" ? " mode-animate" : ""}${tool === "pencil" ? " tool-pencil" : ""}${dragging ? " is-moving" : ""}`}
+          className={`canvas-area${mode === "animate" ? " mode-animate" : ""}${tool === "pencil" ? " tool-pencil" : ""}${tool === "hand" ? " tool-hand" : ""}${dragging ? " is-moving" : ""}`}
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}
         >
-          {/* tool rail (select / pencil / eyedropper + always-on color swatch).
-              Hidden in Animate mode — those tools only apply to design editing. */}
-          {mode === "design" && (
+          {/* tool rail. Select + Hand (pan) are available in every mode; the
+              draw/eyedropper/fill tools only apply to Design editing. */}
           <div className="tool-rail">
             <button className={`tool-btn${tool === "select" ? " is-active" : ""}`} onClick={() => switchTool("select")} title="Select / move (V)">{Icon.cursor()}</button>
-            <button className={`tool-btn${tool === "pencil" ? " is-active" : ""}`} onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")} title="Pencil — draw a shape (P)">{Icon.pen()}</button>
-            <button className="tool-btn" onClick={pickColor} title="Eyedropper — pick a color from screen">{Icon.eyedropper({ size: 18 })}</button>
-            <div className="tool-rail-sep" />
-            <label className="tool-swatch" title={primary && tool === "select" ? "Layer fill" : "Default fill for new shapes"} style={{ background: swatchColor }}>
-              <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(swatchColor) ? swatchColor : "#000000"}
-                onChange={(e) => applyColor(e.target.value)} />
-            </label>
+            <button className={`tool-btn${tool === "hand" ? " is-active" : ""}`} onClick={() => switchTool(tool === "hand" ? "select" : "hand")} title="Hand — drag to pan (H · or hold Space)">{Icon.hand()}</button>
+            {mode === "design" && (
+              <>
+                <button className={`tool-btn${tool === "pencil" ? " is-active" : ""}`} onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")} title="Pencil — draw a shape (P)">{Icon.pen()}</button>
+                <button className="tool-btn" onClick={pickColor} title="Eyedropper — pick a color from screen">{Icon.eyedropper({ size: 18 })}</button>
+                <div className="tool-rail-sep" />
+                <label className="tool-swatch" title={primary && tool === "select" ? "Layer fill" : "Default fill for new shapes"} style={{ background: swatchColor }}>
+                  <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(swatchColor) ? swatchColor : "#000000"}
+                    onChange={(e) => applyColor(e.target.value)} />
+                </label>
+              </>
+            )}
           </div>
-          )}
 
           {tool === "pencil" && (
             <div className="pencil-panel">
@@ -1393,8 +1421,15 @@ export default function App() {
                 <input type="range" min={0} max={100} step={1} value={pencil.smoothing}
                   onChange={(e) => setPencil((p) => ({ ...p, smoothing: parseInt(e.target.value, 10) }))} />
               </label>
+              <label>Pressure<span className="ctl-val">{pencil.pressure}</span>
+                <input type="range" min={0} max={100} step={1} value={pencil.pressure}
+                  onChange={(e) => setPencil((p) => ({ ...p, pressure: parseInt(e.target.value, 10) }))} />
+              </label>
+              <label className="pencil-fill">Fill
+                <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(fillColor) ? fillColor : "#000000"}
+                  onChange={(e) => setFillColor(e.target.value)} />
+              </label>
               <div className="pp-actions">
-                <button className="btn" onClick={finishDrawing} title="Start a separate shape">New Shape</button>
                 <button className="btn btn-accent" onClick={() => switchTool("select")}>Done</button>
               </div>
             </div>
@@ -1505,6 +1540,13 @@ export default function App() {
           onDeleteAnimation={deletePrimaryAnimation}
           onUpdateAnimation={updatePrimaryAnimation}
           onUpdateEffects={updateEffects}
+          styleEditable={editableForControls || (partEdit?.partIds.length ?? 0) > 0}
+          fillValue={swatchColor}
+          borderColorValue={borderColorValue}
+          borderWidthValue={borderWidthValue}
+          onSetFill={applyColor}
+          onSetBorderColor={applyStrokeColor}
+          onSetBorderWidth={applyStrokeWidth}
           motifLibrary={MOTIF_LIBRARY}
           onApplyLibraryMotif={applyLibraryMotif}
           onAddLibraryMotif={addLibraryMotif}

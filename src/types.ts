@@ -73,8 +73,12 @@ export interface MotifPart {
   h: number;
   /** Editable move/rotate/scale layered on top of `baseMarkup`. */
   transform: PartTransform;
-  /** Editable non-destructive color override (fill + stroke). */
+  /** Editable non-destructive fill override. */
   fill?: string;
+  /** Editable non-destructive border (stroke) color override. */
+  stroke?: string;
+  /** Editable border thickness in motif-local units (scales with the art). */
+  strokeWidth?: number;
   visible: boolean;
 }
 

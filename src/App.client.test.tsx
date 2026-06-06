@@ -123,6 +123,22 @@ describe("App layer interactions", () => {
     expect(rows()).toHaveLength(2);
   });
 
+  it("coalesces a rapid run of border-color edits into one undo step", () => {
+    // Default mode is Design; the Style panel exposes Fill + Border swatches.
+    expect((titleBtn("Undo") as HTMLButtonElement).disabled).toBe(true);
+    const borderRow = Array.from(container.querySelectorAll(".style-row")).find((r) => r.textContent?.includes("Border"))!;
+    const input = borderRow.querySelector('input[type="color"]') as HTMLInputElement;
+    const setColor = (hex: string) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+      act(() => { setter.call(input, hex); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    };
+    setColor("#111111"); setColor("#222222"); setColor("#333333");
+    expect((titleBtn("Undo") as HTMLButtonElement).disabled).toBe(false);
+    // the whole picker drag collapses to ONE history step → one undo empties it.
+    click(titleBtn("Undo"));
+    expect((titleBtn("Undo") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("keyboard undo and redo shortcuts use the current document state", () => {
     setMode("arrange");
     newLayer();
@@ -151,6 +167,16 @@ describe("App layer interactions", () => {
 
     click(button("Pause"));
     expect(canvas().querySelector("style")?.textContent ?? "").toContain("animation-play-state: paused");
+  });
+
+  it("Design mode renders the motif at rest — no animation CSS to offset the part overlay", () => {
+    setMode("animate");
+    drawMotionPath(); // applies a center-path animation
+    expect(canvas().querySelector("style")?.textContent ?? "").toContain("@keyframes");
+    // Back in Design, the editable unit must sit at its rest pose so the part
+    // gizmo/marquee line up — so no motion/effect CSS is emitted.
+    setMode("design");
+    expect(canvas().querySelector("style")?.textContent ?? "").not.toContain("@keyframes");
   });
 
   it("adds an animation to every selected layer at once", () => {
@@ -271,8 +297,14 @@ describe("App layer interactions", () => {
     expect(scales).toContain("scale(2.5)");
   });
 
-  const pe = (type: string, x: number, y: number) =>
-    new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
+  const pe = (type: string, x: number, y: number, pointerType = "mouse", pressure = 0.5) => {
+    const e = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
+    Object.defineProperty(e, "pointerId", { value: 1 });
+    Object.defineProperty(e, "pointerType", { value: pointerType });
+    Object.defineProperty(e, "pressure", { value: pressure });
+    Object.defineProperty(e, "getCoalescedEvents", { value: () => [e] });
+    return e;
+  };
   const drawStroke = (a: [number, number], b: [number, number], c: [number, number], d: [number, number]) => {
     const svg = canvas();
     act(() => svg.dispatchEvent(pe("pointerdown", a[0], a[1])));
@@ -282,7 +314,7 @@ describe("App layer interactions", () => {
   const instancesIn = (layerIndex: number) =>
     canvas().querySelectorAll(`[data-layer-id]`)[layerIndex]?.querySelectorAll("use.instance:not(.alt)").length;
 
-  it("Pencil draws a single-instance drawn layer; extra strokes append to it", () => {
+  it("Pencil creates a selected radial-repeat layer for each stroke", () => {
     // Pencil is a Design tool; assert via the canvas (mode-independent) since the
     // panel shows the motif Composition in Design, not the layer list.
     click(titleBtn("Pencil"));
@@ -290,19 +322,27 @@ describe("App layer interactions", () => {
     expect(canvasLayerIds()).toHaveLength(2);
     expect(container.textContent).toContain("Drawn Shape 1");
     const drawnG = canvas().querySelector(".layer[data-layer-id]:last-of-type")!;
-    expect(drawnG.querySelectorAll("use.instance:not(.alt)")).toHaveLength(1);
+    expect(drawnG.querySelectorAll("use.instance:not(.alt)")).toHaveLength(12);
     expect(canvas().querySelector(".layer path[fill]")).not.toBeNull();
     drawStroke([400, 400], [460, 410], [500, 460], [410, 500]);
-    expect(canvasLayerIds()).toHaveLength(2);
-    expect(drawnG.querySelectorAll("path").length).toBeGreaterThanOrEqual(2);
+    expect(canvasLayerIds()).toHaveLength(3);
+    expect(container.textContent).toContain("Drawn Shape 2");
   });
 
-  it("Radialize turns the selected drawn shape into a repeat", () => {
+  it("Pencil strokes are radialized immediately", () => {
     click(titleBtn("Pencil"));
     drawStroke([200, 200], [260, 210], [300, 260], [210, 300]);
     click(button("Done"));
-    expect(instancesIn(1)).toBe(1);
-    click(button("Radialize"));
     expect(instancesIn(1)!).toBeGreaterThan(1);
+  });
+
+  it("Pencil mode ignores touch input for drawing", () => {
+    click(titleBtn("Pencil"));
+    const before = canvasLayerIds().length;
+    const svg = canvas();
+    act(() => svg.dispatchEvent(pe("pointerdown", 200, 200, "touch")));
+    act(() => svg.dispatchEvent(pe("pointermove", 260, 240, "touch")));
+    act(() => svg.dispatchEvent(pe("pointerup", 260, 240, "touch", 0)));
+    expect(canvasLayerIds()).toHaveLength(before);
   });
 });

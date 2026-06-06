@@ -3,9 +3,14 @@ import { importSvgFromText } from "./importSvg";
 import {
   duplicatePart,
   partColor,
+  partStrokeColor,
+  partStrokeWidth,
+  renderPart,
   reorderParts,
   serializeMotif,
   setPartFill,
+  setPartStroke,
+  setPartStrokeWidth,
   setPartTransform,
   setPartVisible,
 } from "./parts";
@@ -100,5 +105,20 @@ describe("motif parts", () => {
     const [a, b, c] = motif.parts!.map((p) => p.id);
     const out = reorderParts(motif, c, a); // move last before first
     expect(out.parts?.map((p) => p.id)).toEqual([c, a, b]);
+  });
+
+  it("sets a non-destructive border (stroke color + thickness) on one part", () => {
+    const motif = importSvgFromText(ring);
+    const id = motif.parts![0].id;
+    const out = setPartStrokeWidth(setPartStroke(motif, id, "#ff0000"), id, 4);
+    const part = out.parts!.find((p) => p.id === id)!;
+    expect(partStrokeColor(part)).toBe("#ff0000");
+    expect(partStrokeWidth(part)).toBe(4);
+    // renderPart + the derived innerHtml carry the border (this part's stroke lives
+    // in a style attr, so it recolors there); other parts are untouched.
+    expect(renderPart(part)).toContain("stroke:#ff0000");
+    expect(renderPart(part)).toContain('stroke-width="4"');
+    expect(partStrokeColor(out.parts![1])).not.toBe("#ff0000");
+    expect(out.innerHtml).toContain('stroke-width="4"');
   });
 });

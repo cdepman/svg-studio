@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { GIZMO_HANDLE, ROTATE_GAP, isHeavy } from "../config";
 import { LayerArt } from "./LayerArt";
-import { pencilPreviewPath, type PencilSettings } from "../motif/drawnPath";
+import { pencilPreviewPath, type PencilPoint, type PencilSettings } from "../motif/drawnPath";
 import { PartEditLayer } from "./PartEditLayer";
 import { ComponentEditLayer } from "./ComponentEditLayer";
 import { smoothPathD } from "../motion/centerPath";
@@ -56,12 +56,12 @@ interface CanvasProps {
   /** Where the drawn path is anchored (the primary petal's center), or null. */
   motionAnchor: Center | null;
   animationsMoving: boolean;
-  /** Active tool. "pencil" replaces select/marquee on the canvas with drawing. */
-  tool: "select" | "pencil";
+  /** Active tool. "pencil" replaces select/marquee with drawing; "hand" pans. */
+  tool: "select" | "pencil" | "hand";
   pencil: PencilSettings;
   fillColor: string;
   /** Finalize a pencil stroke (raw world points) into a drawn layer. */
-  onDrawCommit: (points: Center[]) => void;
+  onDrawCommit: (points: PencilPoint[]) => void;
   viewport: Viewport;
   dragging: boolean;
   setDragging: (d: boolean) => void;
@@ -133,11 +133,12 @@ export function Canvas({
   const marqueeStart = useRef<Center>({ x: 0, y: 0 });
   // Pencil: collect world points; preview path is mutated imperatively via rAF.
   // No React state is written until the stroke is committed on pointerup. PRD §9.
-  const drawPts = useRef<Center[]>([]);
-  const drawStart = useRef<Center>({ x: 0, y: 0 });
+  const drawPts = useRef<PencilPoint[]>([]);
+  const drawStart = useRef<PencilPoint>({ x: 0, y: 0, pressure: 0.5 });
   const drawQueued = useRef(false);
   const pencilPreviewRef = useRef<SVGPathElement>(null);
   const pencilAnchorRef = useRef<SVGCircleElement>(null);
+  const activeDrawPointer = useRef<number | null>(null);
   // Freehand motion-path drawing: collect world points, preview imperatively.
   const motionPts = useRef<Center[]>([]);
   const motionDraw = useRef({ pending: null as PointerEvent | null, queued: false });
@@ -293,7 +294,7 @@ export function Canvas({
     const previewPts = snapping ? [...pts, drawStart.current] : pts;
     pencilPreviewRef.current?.setAttribute(
       "d",
-      pencilPreviewPath(previewPts, pencil.size * inv, pencil.smoothing)
+      pencilPreviewPath(previewPts, pencil.size * inv, pencil.smoothing, pencil.pressure)
     );
     pencilAnchorRef.current?.classList.toggle("snapping", snapping);
   };
@@ -319,11 +320,24 @@ export function Canvas({
       a.classList.remove("snapping");
     }
   };
+  const pressureOf = (e: PointerEvent | React.PointerEvent): number => {
+    if (pencil.pressure <= 0) return 0.5;
+    return e.pressure && e.pressure > 0 ? Math.max(0, Math.min(1, e.pressure)) : 0.5;
+  };
+  const drawPoint = (e: PointerEvent | React.PointerEvent): PencilPoint => {
+    const p = scene.screenToWorld(e.clientX, e.clientY);
+    return { ...p, pressure: pressureOf(e) };
+  };
+  const coalescedDrawEvents = (e: React.PointerEvent): PointerEvent[] => {
+    const native = e.nativeEvent;
+    return typeof native.getCoalescedEvents === "function" ? native.getCoalescedEvents() : [native];
+  };
   const beginDraw = (e: React.PointerEvent<SVGSVGElement>) => {
     e.preventDefault();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     mode.current = "draw";
-    const start = scene.screenToWorld(e.clientX, e.clientY);
+    activeDrawPointer.current = e.pointerId;
+    const start = drawPoint(e);
     drawStart.current = start;
     drawPts.current = [start];
     const el = pencilPreviewRef.current;
@@ -337,7 +351,8 @@ export function Canvas({
   };
 
   const onSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    const wantPan = e.button === 1 || (e.button === 0 && spaceHeld.current);
+    const touchInPencil = tool === "pencil" && e.pointerType === "touch";
+    const wantPan = e.button === 1 || touchInPencil || (e.button === 0 && (spaceHeld.current || tool === "hand"));
     if (wantPan) {
       e.preventDefault();
       mode.current = "pan";
@@ -355,7 +370,8 @@ export function Canvas({
     if (componentEdit) onComponentExit();
     if (partEdit) onExitPart();
 
-    // Pencil tool: draw instead of select/marquee. PRD §8.
+    // Pencil tool: pen/mouse draws; touch pans above. This keeps fingers from
+    // creating accidental marks on iPad while preserving desktop mouse drawing.
     if (tool === "pencil") {
       beginDraw(e);
       return;
@@ -411,6 +427,7 @@ export function Canvas({
     setMarquee(normRect(w, w));
   };
   const onSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (mode.current === "draw" && activeDrawPointer.current !== e.pointerId) return;
     if (mode.current === "pan") {
       panBy(e.clientX - panState.current.lastX, e.clientY - panState.current.lastY);
       panState.current.lastX = e.clientX;
@@ -418,20 +435,23 @@ export function Canvas({
     } else if (mode.current === "marquee") {
       setMarquee(normRect(marqueeStart.current, scene.screenToWorld(e.clientX, e.clientY)));
     } else if (mode.current === "draw") {
-      const p = scene.screenToWorld(e.clientX, e.clientY);
       const pts = drawPts.current;
-      const last = pts[pts.length - 1];
-      // Throttle by a minimum (≈1.5 screen px) so huge strokes stay bounded. PRD §18.
-      if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= 1.5 * inv) {
-        pts.push(p);
-        scheduleDraw();
+      for (const pe of coalescedDrawEvents(e)) {
+        const p = drawPoint(pe);
+        const last = pts[pts.length - 1];
+        // Throttle by a minimum (≈1.5 screen px) so huge strokes stay bounded. PRD §18.
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= 1.5 * inv) {
+          pts.push(p);
+        }
       }
+      scheduleDraw();
     }
   };
   const onSvgPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (mode.current === "draw" && activeDrawPointer.current !== e.pointerId) return;
     if (mode.current === "draw") {
       const pts = drawPts.current;
-      const end = scene.screenToWorld(e.clientX, e.clientY);
+      const end = drawPoint(e);
       // Snap closed: if the pen ended near the start anchor, return the path to
       // the start so the loop joins cleanly. PRD (start/end anchor join).
       if (nearStart(end)) pts.push(drawStart.current);
@@ -439,6 +459,7 @@ export function Canvas({
       pencilPreviewRef.current?.setAttribute("d", "");
       hideAnchor();
       mode.current = null;
+      activeDrawPointer.current = null;
       onDrawCommit(pts);
       return;
     }
@@ -463,9 +484,14 @@ export function Canvas({
       drawPts.current = [];
       pencilPreviewRef.current?.setAttribute("d", "");
       hideAnchor();
+      activeDrawPointer.current = null;
     }
     mode.current = null;
     panState.current.active = false;
+  };
+
+  const onSvgPointerCancel = () => {
+    endPan();
   };
 
   return (
@@ -475,6 +501,7 @@ export function Canvas({
       onPointerDown={onSvgPointerDown}
       onPointerMove={onSvgPointerMove}
       onPointerUp={onSvgPointerUp}
+      onPointerCancel={onSvgPointerCancel}
       onPointerLeave={endPan}
     >
       {motionCss && <style>{motionCss}</style>}
