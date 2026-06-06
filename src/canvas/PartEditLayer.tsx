@@ -2,8 +2,9 @@
 // <use>, whose cloned content is inconsistent for hit testing, so this draws an
 // interactive overlay on the representative copy. Click selects; marquee selects
 // multiple parts; handles resize/rotate; Alt-drag on a single part duplicates.
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { instanceTransform } from "./repeatMath";
+import { CANCEL_GESTURE_EVENT } from "../config";
 import { partTransformAttr } from "../motif/parts";
 import { recolorMarkup } from "../motif/recolor";
 import type { Scene } from "./useScene";
@@ -222,6 +223,25 @@ export function PartEditLayer(props: PartEditLayerProps) {
     else if (d.parts.length === 1) optsRef.current.onCommitTransform(d.parts[0].id, d.latest[d.parts[0].id]);
     else optsRef.current.onCommitTransforms(d.latest);
   }, [onMove]);
+
+  // Abort an in-flight part move/resize/rotate (snap parts back, commit nothing).
+  // Fired when a pinch-zoom interrupts the drag.
+  const cancelDrag = useCallback(() => {
+    const d = drag.current;
+    if (!d) return;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    paintMany(d.startTransforms);
+    const ghost = ghostRef.current;
+    if (ghost) { ghost.style.display = "none"; ghost.innerHTML = ""; }
+    drag.current = null;
+    optsRef.current.setDragging(false);
+  }, [onMove, onUp, paintMany]);
+
+  useEffect(() => {
+    window.addEventListener(CANCEL_GESTURE_EVENT, cancelDrag);
+    return () => window.removeEventListener(CANCEL_GESTURE_EVENT, cancelDrag);
+  }, [cancelDrag]);
 
   const beginSelectionDrag = (
     e: React.PointerEvent,

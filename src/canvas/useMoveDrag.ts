@@ -6,8 +6,9 @@
 // per-frame, a single React commit on release. Targets are resolved at grab
 // time from `scene.allSpecsRef` (so a freshly-clicked, not-yet-committed-as-
 // selected layer can still be moved this gesture).
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { boundsReach } from "./repeatMath";
+import { CANCEL_GESTURE_EVENT } from "../config";
 import type { Scene } from "./useScene";
 import type { Center } from "../types";
 
@@ -21,6 +22,8 @@ export interface MoveDragOptions {
   onStart: () => void;
   /** Commit the gesture's total delta to every grabbed layer's center. */
   onCommit: (ids: string[], delta: Center) => void;
+  /** Gesture aborted mid-flight (e.g. a pinch-zoom began) — nothing committed. */
+  onCancel?: () => void;
 }
 
 export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
@@ -99,6 +102,27 @@ export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
     },
     [onMove, scene]
   );
+
+  // Abort the in-flight move: snap every grabbed layer back to its start, drop
+  // the listeners, and commit nothing. Fired when a pinch-zoom interrupts a drag.
+  const cancel = useCallback(() => {
+    const g = gesture.current;
+    if (!g) return;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    for (const t of g.targets) t.repeatRoot?.setAttribute("transform", `translate(${t.startCenter.x},${t.startCenter.y})`);
+    paintGizmo(0, 0);
+    const lr = scene.layersRootRef.current;
+    if (lr) lr.style.pointerEvents = "";
+    gesture.current = null;
+    optsRef.current.onCancel?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onMove, onUp, scene]);
+
+  useEffect(() => {
+    window.addEventListener(CANCEL_GESTURE_EVENT, cancel);
+    return () => window.removeEventListener(CANCEL_GESTURE_EVENT, cancel);
+  }, [cancel]);
 
   /** Begin moving the given layer ids from a pointerdown on the canvas/artwork. */
   const beginMove = useCallback(

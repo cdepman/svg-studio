@@ -5,7 +5,7 @@
 // selection gizmo: a frame around the union of the selected layers, with corner
 // resize handles and a compact selection-action menu.
 import { useEffect, useRef, useState } from "react";
-import { GIZMO_HANDLE, ROTATE_GAP, TOUCH_GIZMO_HANDLE, TOUCH_ROTATE_GAP, isHeavy } from "../config";
+import { CANCEL_GESTURE_EVENT, GIZMO_HANDLE, ROTATE_GAP, TOUCH_GIZMO_HANDLE, TOUCH_ROTATE_GAP, isHeavy } from "../config";
 import { LayerArt } from "./LayerArt";
 import { pencilPreviewPath, type PencilPoint, type PencilSettings } from "../motif/drawnPath";
 import { PartEditLayer } from "./PartEditLayer";
@@ -398,6 +398,8 @@ export function Canvas({
       if (mode.current === "draw") { drawPts.current = []; pencilPreviewRef.current?.setAttribute("d", ""); hideAnchor(); }
       mode.current = null;
       panState.current.active = false;
+      // Abort an object move/part drag the first finger may have started.
+      window.dispatchEvent(new Event(CANCEL_GESTURE_EVENT));
       return;
     }
     const primaryContact = e.button === 0 || e.buttons === 1 || e.pointerType === "pen" || e.pointerType === "touch";
@@ -582,6 +584,8 @@ export function Canvas({
       mode.current = null;
       panState.current.active = false;
       pinchState.current = { dist: pinch.dist };
+      // Abort any object move/resize/rotate/part drag the first finger started.
+      window.dispatchEvent(new Event(CANCEL_GESTURE_EVENT));
     };
 
     const onTouchMove = (e: TouchEvent) => {

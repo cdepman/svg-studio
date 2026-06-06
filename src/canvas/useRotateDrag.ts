@@ -6,7 +6,8 @@
 // the shared param-delta path (zero React renders mid-drag), committed once on
 // release. The angle delta is accumulated across frames so it wraps cleanly past
 // ±180°.
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { CANCEL_GESTURE_EVENT } from "../config";
 import type { NumericParamKey, Scene } from "./useScene";
 import type { Center } from "../types";
 
@@ -22,6 +23,8 @@ export interface RotateDragOptions {
   key: NumericParamKey;
   onStart: () => void;
   onCommit: (key: NumericParamKey, delta: number) => void;
+  /** Gesture aborted mid-flight (e.g. a pinch-zoom began) — nothing committed. */
+  onCancel?: () => void;
 }
 
 export function useRotateDrag(scene: Scene, opts: RotateDragOptions) {
@@ -74,6 +77,26 @@ export function useRotateDrag(scene: Scene, opts: RotateDragOptions) {
     },
     [onMove, scene]
   );
+
+  // Abort the rotation (snap the param back to its start, commit nothing).
+  // Fired when a pinch-zoom interrupts the drag.
+  const cancel = useCallback(() => {
+    const g = gesture.current;
+    if (!g) return;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    scene.applyParamDelta(optsRef.current.key, 0);
+    const lr = scene.layersRootRef.current;
+    if (lr) lr.style.pointerEvents = "";
+    gesture.current = null;
+    optsRef.current.onCancel?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onMove, onUp, scene]);
+
+  useEffect(() => {
+    window.addEventListener(CANCEL_GESTURE_EVENT, cancel);
+    return () => window.removeEventListener(CANCEL_GESTURE_EVENT, cancel);
+  }, [cancel]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {

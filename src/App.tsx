@@ -551,9 +551,15 @@ export default function App() {
 
   // Remembers the layer grabbed for a move and whether it was part of a
   // multi-selection, so a click (no drag) on it can isolate it.
-  const lastGrab = useRef<{ id: string; multi: boolean } | null>(null);
+  const lastGrab = useRef<{ id: string; multi: boolean; prevSelected: string[] } | null>(null);
   const moveBegin = useMoveDrag(scene, {
     onStart: () => setDragging(true),
+    onCancel: () => {
+      // A pinch interrupted the grab: drop the move and undo the select-on-grab.
+      if (lastGrab.current) updateSelection(() => lastGrab.current!.prevSelected);
+      lastGrab.current = null;
+      setDragging(false);
+    },
     onCommit: (ids, delta) => {
       const moved = Math.hypot(delta.x, delta.y) >= 1;
       if (moved) {
@@ -571,6 +577,7 @@ export default function App() {
 
   const onResizePointerDown = useResizeDrag(scene, {
     onStart: () => setDragging(true),
+    onCancel: () => setDragging(false),
     onCommit: (factor) => {
       // After an Option-duplicate the selection is the copies, so this scales the
       // new layers; otherwise it scales the originals.
@@ -604,6 +611,7 @@ export default function App() {
     getPivot: () => gizmoCenterRef.current,
     key: "angleOffset",
     onStart: () => setDragging(true),
+    onCancel: () => setDragging(false),
     onCommit: (key, delta) => {
       onCommitDelta(key, delta);
       setDragging(false);
@@ -813,7 +821,7 @@ export default function App() {
     const moveIds = alreadySelected
       ? [...editableIdsRef.current]
       : groupIds.filter((memberId) => docRef.current.layers.some((l) => l.id === memberId && l.visible && !l.locked));
-    lastGrab.current = { id, multi: alreadySelected && editableIdsRef.current.size > 1 };
+    lastGrab.current = { id, multi: alreadySelected && editableIdsRef.current.size > 1, prevSelected: docRef.current.selectedIds };
     if (!alreadySelected) selectSingle(id);
     moveBegin(e, moveIds);
   };

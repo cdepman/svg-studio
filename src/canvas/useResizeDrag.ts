@@ -7,7 +7,8 @@
 // concentric mandalas scale together; offset layers scale in place. The scale
 // lives on `repeat-scale` (inside `repeat-root`), so the center-drag path is
 // untouched.
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { CANCEL_GESTURE_EVENT } from "../config";
 import type { ResolvedTarget, Scene } from "./useScene";
 import type { Center } from "../types";
 
@@ -21,6 +22,8 @@ export interface ResizeDragOptions {
   /** Option/Alt at grab: duplicate the selection and select the copies, so the
    *  resize continues on the NEW layers while the originals stay put. */
   onDuplicate: () => void;
+  /** Gesture aborted mid-flight (e.g. a pinch-zoom began) — nothing committed. */
+  onCancel?: () => void;
 }
 
 export function useResizeDrag(scene: Scene, opts: ResizeDragOptions) {
@@ -101,6 +104,37 @@ export function useResizeDrag(scene: Scene, opts: ResizeDragOptions) {
     },
     [onMove, scene]
   );
+
+  // Abort the resize (restore each layer to its start scale + gizmo, commit
+  // nothing). Fired when a pinch-zoom interrupts the drag.
+  const cancel = useCallback(() => {
+    const g = gesture.current;
+    if (!g) return;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const t of g.targets) {
+      t.repeatScale?.setAttribute("transform", `scale(${t.startScale})`);
+      const r = t.baseReach * t.startScale;
+      minX = Math.min(minX, t.startCenter.x - r);
+      minY = Math.min(minY, t.startCenter.y - r);
+      maxX = Math.max(maxX, t.startCenter.x + r);
+      maxY = Math.max(maxY, t.startCenter.y + r);
+    }
+    if (Number.isFinite(minX)) {
+      scene.applyGizmo({ cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, hw: (maxX - minX) / 2, hh: (maxY - minY) / 2 });
+    }
+    const lr = scene.layersRootRef.current;
+    if (lr) lr.style.pointerEvents = "";
+    gesture.current = null;
+    optsRef.current.onCancel?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onMove, onUp, scene]);
+
+  useEffect(() => {
+    window.addEventListener(CANCEL_GESTURE_EVENT, cancel);
+    return () => window.removeEventListener(CANCEL_GESTURE_EVENT, cancel);
+  }, [cancel]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {

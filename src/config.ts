@@ -26,3 +26,7 @@ export const TOUCH_ROTATE_GAP = 36;
 export function isHeavy(count: number, motifWeight: number): boolean {
   return count * motifWeight > HEAVY_THRESHOLD;
 }
+
+/** Window event that tells in-flight pointer gestures (move/resize/rotate/part
+ *  drag) to abort and restore — dispatched when a two-finger pinch-zoom begins. */
+export const CANCEL_GESTURE_EVENT = "rrs-cancel-gesture";
