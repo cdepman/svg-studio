@@ -9,7 +9,6 @@
 // overlay imperatively (zero React renders), committing once on pointerup.
 import { useRef } from "react";
 import { angleStep, instanceTransform } from "./repeatMath";
-import { GIZMO_HANDLE, ROTATE_GAP } from "../config";
 import type { Scene } from "./useScene";
 import type { Center, Layer, RepeatParams } from "../types";
 
@@ -31,11 +30,13 @@ interface ComponentEditLayerProps {
   /** Double-tap the frame to drill into the copy's sub-parts. */
   onDrill: () => void;
   setDragging: (d: boolean) => void;
+  handlePx: number;
+  rotateGapPx: number;
 }
 
 type Mode = "move" | "resize" | "rotate";
 
-export function ComponentEditLayer({ layer, index, scene, inv, onCommit, onDrill, setDragging }: ComponentEditLayerProps) {
+export function ComponentEditLayer({ layer, index, scene, inv, onCommit, onDrill, setDragging, handlePx, rotateGapPx }: ComponentEditLayerProps) {
   const rootRef = useRef<SVGGElement>(null);
   const angleRef = useRef<SVGTextElement>(null);
   const loop = useRef({ pending: null as PointerEvent | null, queued: false });
@@ -57,8 +58,8 @@ export function ComponentEditLayer({ layer, index, scene, inv, onCommit, onDrill
 
   // World-size factor of this copy's artwork, to keep handles/gap screen-sized.
   const effScale = Math.max(1e-3, Math.abs(ls * p.sourceScale * (1 + index * p.scaleStep)));
-  const hsize = (GIZMO_HANDLE * inv) / effScale;
-  const gap = (ROTATE_GAP * inv) / effScale;
+  const hsize = (handlePx * inv) / effScale;
+  const gap = (rotateGapPx * inv) / effScale;
 
   const chainFor = (params: RepeatParams) =>
     `translate(${layer.center.x},${layer.center.y}) scale(${ls}) ${instanceTransform(params, index)}`;

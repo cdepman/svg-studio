@@ -14,6 +14,8 @@ export interface ViewportApi {
   setViewport: React.Dispatch<React.SetStateAction<Viewport>>;
   /** Zoom anchored at an svg-local point (the point under the cursor stays put). */
   zoomAt: (lx: number, ly: number, deltaY: number) => void;
+  /** Zoom by a scale factor anchored at an svg-local point. */
+  zoomBy: (lx: number, ly: number, factor: number) => void;
   /** Pan by a screen-pixel delta (already in svg-local px). */
   panBy: (dx: number, dy: number) => void;
 }
@@ -21,9 +23,8 @@ export interface ViewportApi {
 export function useViewport(initial: Viewport): ViewportApi {
   const [viewport, setViewport] = useState<Viewport>(initial);
 
-  const zoomAt = useCallback((lx: number, ly: number, deltaY: number) => {
+  const zoomBy = useCallback((lx: number, ly: number, factor: number) => {
     setViewport((v) => {
-      const factor = Math.exp(-deltaY * 0.0015);
       const newS = clamp(v.s * factor, MIN_S, MAX_S);
       if (newS === v.s) return v;
       // Keep the world point under the cursor fixed: world = (local - t)/s.
@@ -37,9 +38,13 @@ export function useViewport(initial: Viewport): ViewportApi {
     });
   }, []);
 
+  const zoomAt = useCallback((lx: number, ly: number, deltaY: number) => {
+    zoomBy(lx, ly, Math.exp(-deltaY * 0.0015));
+  }, [zoomBy]);
+
   const panBy = useCallback((dx: number, dy: number) => {
     setViewport((v) => ({ ...v, tx: v.tx + dx, ty: v.ty + dy }));
   }, []);
 
-  return { viewport, setViewport, zoomAt, panBy };
+  return { viewport, setViewport, zoomAt, zoomBy, panBy };
 }

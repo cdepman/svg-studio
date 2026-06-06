@@ -16,7 +16,7 @@ import {
   instanceTransform,
   seamHalves,
 } from "./repeatMath";
-import { GIZMO_DUP_GAP, GIZMO_HANDLE } from "../config";
+import { GIZMO_DUP_GAP, GIZMO_HANDLE, ROTATE_GAP } from "../config";
 import { animationReachPaddingForGeometry } from "../motion/centerPath";
 import { anyEffectEnabled, effectsReachPaddingForGeometry } from "../motion/effects";
 import type { GBounds } from "./selectionBounds";
@@ -72,6 +72,10 @@ export interface Scene {
   selectedLayerIdRef: React.MutableRefObject<string | null>;
   /** 1 / viewport scale, so screen-sized handles can be drawn in world units. */
   invSRef: React.MutableRefObject<number>;
+  /** Current gizmo handle size in screen px (desktop compact, touch larger). */
+  gizmoHandlePxRef: React.MutableRefObject<number>;
+  /** Current rotate stem gap in screen px (desktop compact, touch larger). */
+  rotateGapPxRef: React.MutableRefObject<number>;
 
   screenToWorld: (clientX: number, clientY: number) => Center;
   /** Resolve a layer's repeat-root <g> by id (exists for every visible layer). */
@@ -95,6 +99,8 @@ export function useScene(): Scene {
   const allSpecsRef = useRef<Map<string, DragTargetSpec>>(new Map());
   const selectedLayerIdRef = useRef<string | null>(null);
   const invSRef = useRef(1);
+  const gizmoHandlePxRef = useRef(GIZMO_HANDLE);
+  const rotateGapPxRef = useRef(ROTATE_GAP);
 
   const screenToWorld = useCallback((clientX: number, clientY: number): Center => {
     const g = panZoomRef.current;
@@ -158,7 +164,7 @@ export function useScene(): Scene {
     frame?.setAttribute("y", String(-b.hh));
     frame?.setAttribute("width", String(2 * b.hw));
     frame?.setAttribute("height", String(2 * b.hh));
-    const hs = GIZMO_HANDLE * inv;
+    const hs = gizmoHandlePxRef.current * inv;
     g.querySelectorAll<SVGRectElement>(".gizmo-handle").forEach((h) => {
       const sx = h.dataset.corner?.includes("r") ? 1 : -1;
       const sy = h.dataset.corner?.includes("b") ? 1 : -1;
@@ -170,6 +176,16 @@ export function useScene(): Scene {
     const actions = g.querySelector(".gizmo-action-menu");
     actions?.setAttribute("transform", `translate(${b.hw + GIZMO_DUP_GAP * inv},${-b.hh - GIZMO_DUP_GAP * inv}) scale(${inv})`);
     g.querySelector(".gizmo-rotate")?.setAttribute("transform", `translate(0,${-b.hh})`);
+    const rotateGap = rotateGapPxRef.current * inv;
+    const rotateLine = g.querySelector(".gizmo-rotate-line");
+    rotateLine?.setAttribute("x1", "0");
+    rotateLine?.setAttribute("y1", "0");
+    rotateLine?.setAttribute("x2", "0");
+    rotateLine?.setAttribute("y2", String(-rotateGap));
+    const rotateKnob = g.querySelector(".gizmo-rotate-knob");
+    rotateKnob?.setAttribute("cx", "0");
+    rotateKnob?.setAttribute("cy", String(-rotateGap));
+    rotateKnob?.setAttribute("r", String((gizmoHandlePxRef.current / 2) * inv));
   }, []);
 
   const applyParamDeltas = useCallback(
@@ -238,6 +254,8 @@ export function useScene(): Scene {
       allSpecsRef,
       selectedLayerIdRef,
       invSRef,
+      gizmoHandlePxRef,
+      rotateGapPxRef,
       screenToWorld,
       resolveRepeatRoot: repeatRootOf,
       collectDragTargets,

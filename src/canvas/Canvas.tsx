@@ -5,7 +5,7 @@
 // selection gizmo: a frame around the union of the selected layers, with corner
 // resize handles and a compact selection-action menu.
 import { useEffect, useRef, useState } from "react";
-import { GIZMO_HANDLE, ROTATE_GAP, isHeavy } from "../config";
+import { GIZMO_HANDLE, ROTATE_GAP, TOUCH_GIZMO_HANDLE, TOUCH_ROTATE_GAP, isHeavy } from "../config";
 import { LayerArt } from "./LayerArt";
 import { pencilPreviewPath, type PencilPoint, type PencilSettings } from "../motif/drawnPath";
 import { PartEditLayer } from "./PartEditLayer";
@@ -61,7 +61,7 @@ interface CanvasProps {
   pencil: PencilSettings;
   fillColor: string;
   /** Finalize a pencil stroke (raw world points) into a drawn layer. */
-  onDrawCommit: (points: PencilPoint[]) => void;
+  onDrawCommit: (points: PencilPoint[], closed: boolean) => void;
   viewport: Viewport;
   dragging: boolean;
   setDragging: (d: boolean) => void;
@@ -75,6 +75,8 @@ interface CanvasProps {
   onRotatePointerDown: (e: React.PointerEvent) => void;
   /** Zoom the canvas at an svg-local point. */
   onZoom: (lx: number, ly: number, deltaY: number) => void;
+  /** Pinch-zoom the canvas at an svg-local point by a direct scale factor. */
+  onPinchZoom: (lx: number, ly: number, factor: number) => void;
   panBy: (dx: number, dy: number) => void;
 }
 
@@ -116,13 +118,20 @@ export function Canvas({
   onResizePointerDown,
   onRotatePointerDown,
   onZoom,
+  onPinchZoom,
   panBy,
 }: CanvasProps) {
   const { s, tx, ty } = viewport;
   const inv = 1 / s;
+  const [largeTouchTargets, setLargeTouchTargets] = useState(false);
+  const handlePx = largeTouchTargets ? TOUCH_GIZMO_HANDLE : GIZMO_HANDLE;
+  const rotateGapPx = largeTouchTargets ? TOUCH_ROTATE_GAP : ROTATE_GAP;
+  scene.gizmoHandlePxRef.current = handlePx;
+  scene.rotateGapPxRef.current = rotateGapPx;
 
   const spaceHeld = useRef(false);
   const panState = useRef({ active: false, lastX: 0, lastY: 0 });
+  const pinchState = useRef<{ dist: number } | null>(null);
   // Manual double-tap detection (native dblclick is unreliable under the
   // pointer-capture used by the move gesture).
   const lastTap = useRef<{ id: string; t: number; x: number; y: number } | null>(null);
@@ -210,20 +219,38 @@ export function Canvas({
     };
   }, []);
 
-  // Native, NON-passive wheel listener: React's onWheel is passive, so
-  // preventDefault there is ignored and the browser page-zooms on a trackpad
-  // pinch (ctrl+wheel). Here we can preventDefault and zoom only the canvas.
+  useEffect(() => {
+    const detect = () => {
+      const hasTouch = typeof navigator !== "undefined" && (navigator.maxTouchPoints ?? 0) > 0;
+      const coarse = typeof window !== "undefined" && !!window.matchMedia?.("(any-pointer: coarse)").matches;
+      setLargeTouchTargets(hasTouch || coarse);
+    };
+    detect();
+    const media = typeof window !== "undefined" ? window.matchMedia?.("(any-pointer: coarse)") : null;
+    media?.addEventListener?.("change", detect);
+    return () => media?.removeEventListener?.("change", detect);
+  }, []);
+
+  // Native, NON-passive wheel listener (React's onWheel is passive, so its
+  // preventDefault is ignored). Plain scroll PANS the canvas — like every other
+  // canvas app — while a trackpad pinch (which the browser reports as ctrl+wheel)
+  // or an explicit Alt/⌘ + scroll ZOOMS at the cursor.
   useEffect(() => {
     const svg = scene.svgRef.current;
     if (!svg) return;
     const onWheelNative = (e: WheelEvent) => {
       e.preventDefault();
-      const r = svg.getBoundingClientRect();
-      onZoom(e.clientX - r.left, e.clientY - r.top, e.deltaY);
+      if (e.ctrlKey || e.altKey || e.metaKey) {
+        const r = svg.getBoundingClientRect();
+        onZoom(e.clientX - r.left, e.clientY - r.top, e.deltaY);
+      } else {
+        // deltaY>0 (scroll down) reveals lower content → move the content up.
+        panBy(-e.deltaX, -e.deltaY);
+      }
     };
     svg.addEventListener("wheel", onWheelNative, { passive: false });
     return () => svg.removeEventListener("wheel", onWheelNative);
-  }, [onZoom, scene]);
+  }, [onZoom, panBy, scene]);
 
   // Preview points: the drawn stroke translated so its first point sits on the
   // anchor (the primary petal's center) — the path always starts from the petal.
@@ -294,7 +321,7 @@ export function Canvas({
     const previewPts = snapping ? [...pts, drawStart.current] : pts;
     pencilPreviewRef.current?.setAttribute(
       "d",
-      pencilPreviewPath(previewPts, pencil.size * inv, pencil.smoothing, pencil.pressure)
+      pencilPreviewPath(previewPts, pencil.size * inv, pencil.smoothing, pencil.pressure, snapping)
     );
     pencilAnchorRef.current?.classList.toggle("snapping", snapping);
   };
@@ -351,8 +378,9 @@ export function Canvas({
   };
 
   const onSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    const primaryContact = e.button === 0 || e.buttons === 1 || e.pointerType === "pen" || e.pointerType === "touch";
     const touchInPencil = tool === "pencil" && e.pointerType === "touch";
-    const wantPan = e.button === 1 || touchInPencil || (e.button === 0 && (spaceHeld.current || tool === "hand"));
+    const wantPan = e.button === 1 || touchInPencil || (primaryContact && (spaceHeld.current || tool === "hand"));
     if (wantPan) {
       e.preventDefault();
       mode.current = "pan";
@@ -360,7 +388,7 @@ export function Canvas({
       (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
       return;
     }
-    if (e.button !== 0) return;
+    if (!primaryContact) return;
     // The gizmo (resize handles + selection menu), component overlay and part
     // overlay own their own pointerdowns.
     if ((e.target as Element).closest?.(".gizmo, .motion-path-ui, .component-ui, .part-edit-overlay")) return;
@@ -454,13 +482,14 @@ export function Canvas({
       const end = drawPoint(e);
       // Snap closed: if the pen ended near the start anchor, return the path to
       // the start so the loop joins cleanly. PRD (start/end anchor join).
-      if (nearStart(end)) pts.push(drawStart.current);
+      const closed = nearStart(end);
+      if (closed) pts.push(drawStart.current);
       drawPts.current = [];
       pencilPreviewRef.current?.setAttribute("d", "");
       hideAnchor();
       mode.current = null;
       activeDrawPointer.current = null;
-      onDrawCommit(pts);
+      onDrawCommit(pts, closed);
       return;
     }
     if (mode.current === "marquee") {
@@ -493,6 +522,69 @@ export function Canvas({
   const onSvgPointerCancel = () => {
     endPan();
   };
+
+  useEffect(() => {
+    const svg = scene.svgRef.current;
+    if (!svg) return;
+
+    const localPinch = (e: TouchEvent) => {
+      const a = e.touches[0];
+      const b = e.touches[1];
+      if (!a || !b) return null;
+      const r = svg.getBoundingClientRect();
+      const dx = b.clientX - a.clientX;
+      const dy = b.clientY - a.clientY;
+      return {
+        lx: (a.clientX + b.clientX) / 2 - r.left,
+        ly: (a.clientY + b.clientY) / 2 - r.top,
+        dist: Math.hypot(dx, dy),
+      };
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (mode.current === "draw") {
+        e.preventDefault();
+        return;
+      }
+      if (e.touches.length !== 2) return;
+      const pinch = localPinch(e);
+      if (!pinch || pinch.dist < 4) return;
+      e.preventDefault();
+      if (mode.current === "marquee") setMarquee(null);
+      mode.current = null;
+      panState.current.active = false;
+      pinchState.current = { dist: pinch.dist };
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (mode.current === "draw") {
+        e.preventDefault();
+        return;
+      }
+      if (e.touches.length !== 2) return;
+      const pinch = localPinch(e);
+      if (!pinch || pinch.dist < 4) return;
+      e.preventDefault();
+      const prev = pinchState.current;
+      if (prev) onPinchZoom(pinch.lx, pinch.ly, pinch.dist / prev.dist);
+      pinchState.current = { dist: pinch.dist };
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) pinchState.current = null;
+    };
+
+    svg.addEventListener("touchstart", onTouchStart, { passive: false });
+    svg.addEventListener("touchmove", onTouchMove, { passive: false });
+    svg.addEventListener("touchend", onTouchEnd, { passive: false });
+    svg.addEventListener("touchcancel", onTouchEnd, { passive: false });
+    return () => {
+      svg.removeEventListener("touchstart", onTouchStart);
+      svg.removeEventListener("touchmove", onTouchMove);
+      svg.removeEventListener("touchend", onTouchEnd);
+      svg.removeEventListener("touchcancel", onTouchEnd);
+    };
+  }, [onPinchZoom, scene]);
 
   return (
     <svg
@@ -595,13 +687,13 @@ export function Canvas({
               {/* Rotate knob above the top edge: rotates the whole composite
                   (angle offset). */}
               <g className="gizmo-rotate" transform={`translate(0,${-gizmo.hh})`} onPointerDown={onRotatePointerDown}>
-                <line className="gizmo-rotate-line" x1={0} y1={0} x2={0} y2={-ROTATE_GAP * inv} />
-                <circle className="gizmo-rotate-knob" cx={0} cy={-ROTATE_GAP * inv} r={6 * inv} />
+                <line className="gizmo-rotate-line" x1={0} y1={0} x2={0} y2={-rotateGapPx * inv} />
+                <circle className="gizmo-rotate-knob" cx={0} cy={-rotateGapPx * inv} r={(handlePx / 2) * inv} />
               </g>
               {CORNERS.map((c) => {
                 const sx = c.includes("r") ? 1 : -1;
                 const sy = c.includes("b") ? 1 : -1;
-                const hs = GIZMO_HANDLE * inv;
+                const hs = handlePx * inv;
                 return (
                   <rect
                     key={c}
@@ -632,6 +724,8 @@ export function Canvas({
                 onCommit={onCommitComponent}
                 onDrill={drillToParts}
                 setDragging={setDragging}
+                handlePx={handlePx}
+                rotateGapPx={rotateGapPx}
               />
             ) : null;
           })()}
@@ -652,6 +746,8 @@ export function Canvas({
                 onDuplicatePart={(partId, t) => onDuplicatePart(pl.id, partId, t)}
                 setDragging={setDragging}
                 spaceHeldRef={spaceHeld}
+                handlePx={handlePx}
+                rotateGapPx={rotateGapPx}
               />
             ) : null;
           })()}

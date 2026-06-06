@@ -14,10 +14,14 @@ export const HANDLE_HIT_R = 16;
 
 /** Resize-gizmo corner handle size, in screen px. */
 export const GIZMO_HANDLE = 11;
+/** Resize-gizmo corner handle size on touch-capable devices, in screen px. */
+export const TOUCH_GIZMO_HANDLE = 22;
 /** Gap from the gizmo's top-right corner to the duplicate button, screen px. */
 export const GIZMO_DUP_GAP = 16;
 /** Length of the rotate-knob stem above the gizmo / component box, screen px. */
 export const ROTATE_GAP = 26;
+/** Touch-capable rotate-knob stem length, screen px. */
+export const TOUCH_ROTATE_GAP = 36;
 
 export function isHeavy(count: number, motifWeight: number): boolean {
   return count * motifWeight > HEAVY_THRESHOLD;

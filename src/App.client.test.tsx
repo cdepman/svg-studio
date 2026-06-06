@@ -169,6 +169,21 @@ describe("App layer interactions", () => {
     expect(canvas().querySelector("style")?.textContent ?? "").toContain("animation-play-state: paused");
   });
 
+  it("plain scroll pans the canvas; pinch/⌥ scroll zooms", () => {
+    const svg = canvas();
+    const panZoom = svg.querySelector("g[transform]")!; // the translate(tx,ty) scale(s) group
+    const zoomVal = () => container.querySelector(".zoom-val")?.textContent;
+    const transformBefore = panZoom.getAttribute("transform");
+    const zoomBefore = zoomVal();
+    // plain wheel → pan (translate changes), zoom unchanged
+    act(() => svg.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true })));
+    expect(panZoom.getAttribute("transform")).not.toBe(transformBefore);
+    expect(zoomVal()).toBe(zoomBefore);
+    // ctrl/pinch wheel → zoom (zoom % changes)
+    act(() => svg.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true })));
+    expect(zoomVal()).not.toBe(zoomBefore);
+  });
+
   it("Design mode renders the motif at rest — no animation CSS to offset the part overlay", () => {
     setMode("animate");
     drawMotionPath(); // applies a center-path animation
@@ -305,6 +320,13 @@ describe("App layer interactions", () => {
     Object.defineProperty(e, "getCoalescedEvents", { value: () => [e] });
     return e;
   };
+  const touch = (type: string, points: [number, number][]) => {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "touches", {
+      value: points.map(([clientX, clientY]) => ({ clientX, clientY })),
+    });
+    return e;
+  };
   const drawStroke = (a: [number, number], b: [number, number], c: [number, number], d: [number, number]) => {
     const svg = canvas();
     act(() => svg.dispatchEvent(pe("pointerdown", a[0], a[1])));
@@ -313,6 +335,7 @@ describe("App layer interactions", () => {
   };
   const instancesIn = (layerIndex: number) =>
     canvas().querySelectorAll(`[data-layer-id]`)[layerIndex]?.querySelectorAll("use.instance:not(.alt)").length;
+  const panZoom = () => Array.from(canvas().children).find((el) => el.tagName.toLowerCase() === "g")!;
 
   it("Pencil creates a selected radial-repeat layer for each stroke", () => {
     // Pencil is a Design tool; assert via the canvas (mode-independent) since the
@@ -344,5 +367,27 @@ describe("App layer interactions", () => {
     act(() => svg.dispatchEvent(pe("pointermove", 260, 240, "touch")));
     act(() => svg.dispatchEvent(pe("pointerup", 260, 240, "touch", 0)));
     expect(canvasLayerIds()).toHaveLength(before);
+  });
+
+  it("Hand tool pans with touch and pen input", () => {
+    click(titleBtn("Hand"));
+    expect(panZoom().getAttribute("transform")).toBe("translate(0,0) scale(1)");
+    const svg = canvas();
+    act(() => svg.dispatchEvent(pe("pointerdown", 200, 200, "touch")));
+    act(() => svg.dispatchEvent(pe("pointermove", 240, 230, "touch")));
+    act(() => svg.dispatchEvent(pe("pointerup", 240, 230, "touch", 0)));
+    expect(panZoom().getAttribute("transform")).toBe("translate(40,30) scale(1)");
+    act(() => svg.dispatchEvent(pe("pointerdown", 240, 230, "pen")));
+    act(() => svg.dispatchEvent(pe("pointermove", 260, 250, "pen")));
+    act(() => svg.dispatchEvent(pe("pointerup", 260, 250, "pen", 0)));
+    expect(panZoom().getAttribute("transform")).toBe("translate(60,50) scale(1)");
+  });
+
+  it("two-finger touch pinch zooms the canvas around the gesture midpoint", () => {
+    const svg = canvas();
+    expect(panZoom().getAttribute("transform")).toBe("translate(0,0) scale(1)");
+    act(() => svg.dispatchEvent(touch("touchstart", [[200, 200], [300, 200]])));
+    act(() => svg.dispatchEvent(touch("touchmove", [[150, 200], [350, 200]])));
+    expect(panZoom().getAttribute("transform")).toBe("translate(-250,-200) scale(2)");
   });
 });

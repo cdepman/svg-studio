@@ -4,7 +4,6 @@
 // multiple parts; handles resize/rotate; Alt-drag on a single part duplicates.
 import { useCallback, useRef, useState } from "react";
 import { instanceTransform } from "./repeatMath";
-import { GIZMO_HANDLE, ROTATE_GAP } from "../config";
 import { partTransformAttr } from "../motif/parts";
 import { recolorMarkup } from "../motif/recolor";
 import type { Scene } from "./useScene";
@@ -31,6 +30,8 @@ interface PartEditLayerProps {
   /** Alt-drag: copy the part with the gesture's transform applied. */
   onDuplicatePart: (partId: string, t: PartTransform) => void;
   setDragging: (d: boolean) => void;
+  handlePx: number;
+  rotateGapPx: number;
   /** While space is held the canvas wants to pan, so the overlay yields its
    *  pointer gestures (lets the event bubble to the SVG pan handler). */
   spaceHeldRef?: { current: boolean };
@@ -95,7 +96,7 @@ const rotateAround = (p: Center, pivot: Center, degrees: number): Center => {
 };
 
 export function PartEditLayer(props: PartEditLayerProps) {
-  const { layer, selectedPartIds, index, inv } = props;
+  const { layer, selectedPartIds, index, inv, handlePx, rotateGapPx } = props;
   const optsRef = useRef(props);
   optsRef.current = props;
   const partSpaceRef = useRef<SVGGElement>(null);
@@ -313,9 +314,9 @@ export function PartEditLayer(props: PartEditLayerProps) {
 
   const p = layer.params;
   const instScale = layer.scale * p.sourceScale * (1 + index * p.scaleStep);
-  const hsFor = (partScale = 1) => (GIZMO_HANDLE * inv) / Math.max(1e-3, Math.abs(instScale * partScale));
-  const groupHandle = (GIZMO_HANDLE * inv) / Math.max(1e-3, Math.abs(instScale));
-  const groupGap = (ROTATE_GAP * inv) / Math.max(1e-3, Math.abs(instScale));
+  const hsFor = (partScale = 1) => (handlePx * inv) / Math.max(1e-3, Math.abs(instScale * partScale));
+  const groupHandle = (handlePx * inv) / Math.max(1e-3, Math.abs(instScale));
+  const groupGap = (rotateGapPx * inv) / Math.max(1e-3, Math.abs(instScale));
   const motifBox = layer.motif.box;
 
   return (
@@ -348,7 +349,7 @@ export function PartEditLayer(props: PartEditLayerProps) {
               const x0 = part.cx - part.w / 2;
               const y0 = part.cy - part.h / 2;
               const hs = hsFor(part.transform.scale);
-              const gap = (ROTATE_GAP * inv) / Math.max(1e-3, Math.abs(instScale * part.transform.scale));
+              const gap = (rotateGapPx * inv) / Math.max(1e-3, Math.abs(instScale * part.transform.scale));
               const single = selectedParts.length === 1;
               return (
                 <g key={part.id} data-part-overlay={part.id} transform={partTransformAttr(part.transform, part.cx, part.cy) ?? "translate(0 0)"}>

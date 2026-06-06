@@ -72,6 +72,7 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       onResizePointerDown={() => {}}
       onRotatePointerDown={() => {}}
       onZoom={() => {}}
+      onPinchZoom={() => {}}
       panBy={() => {}}
     />
   );

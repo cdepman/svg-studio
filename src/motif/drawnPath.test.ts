@@ -12,7 +12,7 @@ const square: Center[] = [
 
 describe("createDrawnMotif (PRD §13)", () => {
   it("produces a normalized filled-path Motif anchored at its visual center", () => {
-    const drawn = createDrawnMotif(square, 12, 50, "#abcdef");
+    const drawn = createDrawnMotif(square, 12, 50, "#abcdef", 0, true);
     expect(drawn).not.toBeNull();
     const { motif, worldCenter } = drawn!;
     // filled closed region: literal fill + same-color round stroke, no currentColor
@@ -35,6 +35,13 @@ describe("createDrawnMotif (PRD §13)", () => {
   it("discards a stray click / tiny stroke", () => {
     expect(createDrawnMotif([{ x: 0, y: 0 }], 10, 50, "#000")).toBeNull();
     expect(createDrawnMotif([{ x: 0, y: 0 }, { x: 0.5, y: 0 }], 2, 50, "#000")).toBeNull();
+  });
+
+  it("keeps open strokes as ink lines instead of filled interiors", () => {
+    const drawn = createDrawnMotif(square.slice(0, 4), 12, 50, "#123456", 80, false);
+    expect(drawn).not.toBeNull();
+    expect(drawn!.motif.innerHtml).toContain('fill="#123456"');
+    expect(drawn!.motif.innerHtml).toContain('stroke="none"');
   });
 });
 

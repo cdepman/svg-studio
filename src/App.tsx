@@ -199,7 +199,7 @@ export default function App() {
   const drawnCount = useRef(0);
 
   const scene = useScene();
-  const { viewport, setViewport, zoomAt, panBy } = useViewport({ tx: 0, ty: 0, s: 1 });
+  const { viewport, setViewport, zoomAt, zoomBy: zoomViewportBy, panBy } = useViewport({ tx: 0, ty: 0, s: 1 });
 
   // --- Derived selection ---
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -935,8 +935,8 @@ export default function App() {
   }
 
   // Pencil commit: one finished stroke becomes one selected radial-repeat layer.
-  function onDrawCommit(points: PencilPoint[]) {
-    const sp = strokeToFilledPath(points, pencil.size / viewport.s, pencil.smoothing, fillColor, pencil.pressure);
+  function onDrawCommit(points: PencilPoint[], closed: boolean) {
+    const sp = strokeToFilledPath(points, pencil.size / viewport.s, pencil.smoothing, fillColor, pencil.pressure, closed);
     if (!sp) return; // tiny stroke / stray click — silently ignored. PRD §18.
 
     drawnCount.current += 1;
@@ -1260,18 +1260,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyPlaying, animTotal, loop]);
 
-  function zoomBy(factor: number) {
+  function zoomButtonsBy(factor: number) {
     const svg = scene.svgRef.current;
     if (!svg) return;
     const r = svg.getBoundingClientRect();
-    const cx = r.width / 2;
-    const cy = r.height / 2;
-    setViewport((v) => {
-      const s = Math.max(0.1, Math.min(8, v.s * factor));
-      const wx = (cx - v.tx) / v.s;
-      const wy = (cy - v.ty) / v.s;
-      return { s, tx: cx - wx * s, ty: cy - wy * s };
-    });
+    zoomViewportBy(r.width / 2, r.height / 2, factor);
   }
 
   const fileItems = [
@@ -1489,14 +1482,15 @@ export default function App() {
             onResizePointerDown={onResizePointerDown}
             onRotatePointerDown={onRotatePointerDown}
             onZoom={zoomAt}
+            onPinchZoom={zoomViewportBy}
             panBy={panBy}
           />
 
           {/* zoom cluster */}
           <div className="zoom-cluster">
-            <button onClick={() => zoomBy(1 / 1.2)} title="Zoom out">{Icon.minus({ size: 16 })}</button>
+            <button onClick={() => zoomButtonsBy(1 / 1.2)} title="Zoom out">{Icon.minus({ size: 16 })}</button>
             <span className="zoom-val">{Math.round(viewport.s * 100)}%</span>
-            <button onClick={() => zoomBy(1.2)} title="Zoom in">{Icon.plus({ size: 16 })}</button>
+            <button onClick={() => zoomButtonsBy(1.2)} title="Zoom in">{Icon.plus({ size: 16 })}</button>
           </div>
 
           {/* hint chip */}
@@ -1584,7 +1578,7 @@ export default function App() {
         <span className="stat-sep" />
         <span><span className="stat-k">mode</span>{mode}</span>
         <span className="status-flex" />
-        <span className="status-hints">⌘Z undo · ⌘A all · drag empty = marquee · space/middle = pan · scroll = zoom</span>
+        <span className="status-hints">⌘Z undo · ⌘A all · drag empty = marquee · scroll = pan · pinch / ⌥-scroll = zoom</span>
       </div>
     </div>
   );
