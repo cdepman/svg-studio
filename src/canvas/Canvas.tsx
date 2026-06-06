@@ -136,6 +136,10 @@ export function Canvas({
   const spaceHeld = useRef(false);
   const panState = useRef({ active: false, lastX: 0, lastY: 0 });
   const pinchState = useRef<{ dist: number } | null>(null);
+  // True while two fingers are down (a pinch-zoom): suppresses marquee/select so
+  // zooming never rubber-bands or selects. Shared with the part-edit overlay.
+  const pinchingRef = useRef(false);
+  const activeTouches = useRef<Set<number>>(new Set());
   // Manual double-tap detection (native dblclick is unreliable under the
   // pointer-capture used by the move gesture).
   const lastTap = useRef<{ id: string; t: number; x: number; y: number } | null>(null);
@@ -386,6 +390,16 @@ export function Canvas({
   };
 
   const onSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === "touch") activeTouches.current.add(e.pointerId);
+    // A second finger (or an in-flight pinch) means the user is zooming, not
+    // selecting — cancel any gesture already started and ignore this contact.
+    if (pinchingRef.current || activeTouches.current.size > 1) {
+      if (mode.current === "marquee") setMarquee(null);
+      if (mode.current === "draw") { drawPts.current = []; pencilPreviewRef.current?.setAttribute("d", ""); hideAnchor(); }
+      mode.current = null;
+      panState.current.active = false;
+      return;
+    }
     const primaryContact = e.button === 0 || e.buttons === 1 || e.pointerType === "pen" || e.pointerType === "touch";
     const touchInPencil = tool === "pencil" && e.pointerType === "touch";
     const wantPan = e.button === 1 || touchInPencil || (primaryContact && (spaceHeld.current || tool === "hand"));
@@ -484,6 +498,7 @@ export function Canvas({
     }
   };
   const onSvgPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === "touch") activeTouches.current.delete(e.pointerId);
     if (mode.current === "draw" && activeDrawPointer.current !== e.pointerId) return;
     if (mode.current === "draw") {
       const pts = drawPts.current;
@@ -501,8 +516,11 @@ export function Canvas({
       return;
     }
     if (mode.current === "marquee") {
-      const rect = normRect(marqueeStart.current, scene.screenToWorld(e.clientX, e.clientY));
-      onMarqueeSelect(rect, e.shiftKey);
+      // Don't commit a selection if a pinch slipped in during the drag.
+      if (!pinchingRef.current) {
+        const rect = normRect(marqueeStart.current, scene.screenToWorld(e.clientX, e.clientY));
+        onMarqueeSelect(rect, e.shiftKey);
+      }
       setMarquee(null);
     }
     if (mode.current !== "motion-path") mode.current = null;
@@ -527,7 +545,8 @@ export function Canvas({
     panState.current.active = false;
   };
 
-  const onSvgPointerCancel = () => {
+  const onSvgPointerCancel = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === "touch") activeTouches.current.delete(e.pointerId);
     endPan();
   };
 
@@ -558,6 +577,7 @@ export function Canvas({
       const pinch = localPinch(e);
       if (!pinch || pinch.dist < 4) return;
       e.preventDefault();
+      pinchingRef.current = true;
       if (mode.current === "marquee") setMarquee(null);
       mode.current = null;
       panState.current.active = false;
@@ -579,7 +599,12 @@ export function Canvas({
     };
 
     const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) pinchState.current = null;
+      if (e.touches.length < 2) {
+        pinchState.current = null;
+        // Clear the pinch flag only once all fingers lift, so a leftover finger
+        // dragging after a pinch doesn't immediately start a marquee.
+        if (e.touches.length === 0) pinchingRef.current = false;
+      }
     };
 
     svg.addEventListener("touchstart", onTouchStart, { passive: false });
@@ -754,6 +779,7 @@ export function Canvas({
                 onDuplicatePart={(partId, t) => onDuplicatePart(pl.id, partId, t)}
                 setDragging={setDragging}
                 spaceHeldRef={spaceHeld}
+                pinchingRef={pinchingRef}
                 handlePx={handlePx}
                 rotateGapPx={rotateGapPx}
               />

@@ -40,6 +40,10 @@ interface ControlsProps {
   onBeginAnimateCenter: () => void;
   onTogglePlayback: () => void;
   onDeleteAnimation: () => void;
+  /** Remove every animation (motion path + effects) from the editable selection. */
+  onClearAnimations: () => void;
+  /** How many selected layers currently have an animation (for the Clear label). */
+  clearableCount: number;
   onUpdateAnimation: (patch: (animation: CenterPathAnimation) => CenterPathAnimation) => void;
   onUpdateEffects: (patch: (e: LayerEffects) => LayerEffects) => void;
   // Fill & border (Design mode "Style" panel).
@@ -473,16 +477,21 @@ function EffectsSection({
 }
 
 function AnimateInspector(props: ControlsProps) {
-  const { primary, animationEditable, drawingMotionPath, animationPlaying, onBeginAnimateCenter, onTogglePlayback, onDeleteAnimation, onUpdateAnimation, onUpdateEffects } = props;
+  const { primary, animationEditable, drawingMotionPath, animationPlaying, onBeginAnimateCenter, onTogglePlayback, onDeleteAnimation, onClearAnimations, clearableCount, onUpdateAnimation, onUpdateEffects } = props;
   const animation = primary!.animation?.type === "centerPath" ? primary!.animation : null;
   const effects = { ...DEFAULT_EFFECTS, ...(primary!.effects ?? {}) };
 
   return (
     <div className="insp-scroll scroll">
       <section className="group">
-        <button className="play-btn" onClick={onTogglePlayback} style={{ marginBottom: 13 }} disabled={!animationEditable}>
+        <button className="play-btn" onClick={onTogglePlayback} disabled={!animationEditable}>
           {animationPlaying ? Icon.pause() : Icon.play()} {animationPlaying ? "Pause" : "Play"}
         </button>
+        {clearableCount > 0 && (
+          <button className="btn btn-ghost anim-clear" onClick={onClearAnimations} style={{ width: "100%", marginTop: 9, justifyContent: "center" }}>
+            {Icon.trash({ size: 14 })} Clear {clearableCount > 1 ? `${clearableCount} animations` : "animation"}
+          </button>
+        )}
       </section>
 
       {animation || drawingMotionPath ? (

@@ -35,6 +35,8 @@ interface PartEditLayerProps {
   /** While space is held the canvas wants to pan, so the overlay yields its
    *  pointer gestures (lets the event bubble to the SVG pan handler). */
   spaceHeldRef?: { current: boolean };
+  /** True while a two-finger pinch-zoom is in progress — suppress select/marquee. */
+  pinchingRef?: { current: boolean };
 }
 
 // The marquee/select surface spans far beyond the motif box so a selection drag
@@ -228,7 +230,7 @@ export function PartEditLayer(props: PartEditLayerProps) {
     pivot: Center,
     pickOnClick = false
   ) => {
-    if (optsRef.current.spaceHeldRef?.current) return; // let the canvas pan
+    if (optsRef.current.spaceHeldRef?.current || optsRef.current.pinchingRef?.current) return; // pan / pinch
     e.preventDefault();
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
@@ -263,7 +265,7 @@ export function PartEditLayer(props: PartEditLayerProps) {
   };
 
   const beginPart = (e: React.PointerEvent, part: MotifPart, mode: Mode) => {
-    if (optsRef.current.spaceHeldRef?.current) return; // let the canvas pan
+    if (optsRef.current.spaceHeldRef?.current || optsRef.current.pinchingRef?.current) return; // pan / pinch
     const additive = e.shiftKey || e.metaKey || e.ctrlKey;
     if (additive) {
       e.preventDefault();
@@ -285,6 +287,8 @@ export function PartEditLayer(props: PartEditLayerProps) {
   const onMarqueeMove = useCallback((e: PointerEvent) => {
     const d = marqueeDrag.current;
     if (!d) return;
+    // A pinch started mid-drag → abandon the marquee (no rubber-band, no select).
+    if (optsRef.current.pinchingRef?.current) { marqueeDrag.current = null; setMarquee(null); return; }
     setMarquee(normRect(d.start, toLocal(e.clientX, e.clientY)));
   }, [toLocal]);
 
@@ -293,7 +297,7 @@ export function PartEditLayer(props: PartEditLayerProps) {
     window.removeEventListener("pointermove", onMarqueeMove);
     window.removeEventListener("pointerup", onMarqueeUp);
     marqueeDrag.current = null;
-    if (!d) return;
+    if (!d || optsRef.current.pinchingRef?.current) { setMarquee(null); return; }
     const rect = normRect(d.start, toLocal(e.clientX, e.clientY));
     const ids = parts.filter((part) => rectIntersects(rect, partBox(part))).map((part) => part.id);
     optsRef.current.onSelectParts(ids, d.additive);
@@ -301,7 +305,7 @@ export function PartEditLayer(props: PartEditLayerProps) {
   }, [onMarqueeMove, parts, toLocal]);
 
   const beginMarquee = (e: React.PointerEvent) => {
-    if (optsRef.current.spaceHeldRef?.current) return; // let the canvas pan
+    if (optsRef.current.spaceHeldRef?.current || optsRef.current.pinchingRef?.current) return; // pan / pinch
     e.preventDefault();
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);

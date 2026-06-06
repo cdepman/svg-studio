@@ -60,6 +60,10 @@ export const Icon = {
   ungroup: (p: IconProps = {}) => svg(<><rect x={3} y={3} width={6} height={6} rx={1} /><rect x={15} y={3} width={6} height={6} rx={1} /><rect x={9} y={15} width={6} height={6} rx={1} /></>, p),
   reset: (p: IconProps = {}) => svg(<path d="M4 12a8 8 0 108-8 8 8 0 00-6 2.7L4 9M4 4v4h4" />, p),
   cursor: (p: IconProps = {}) => svg(<path d="M5 3l6 16 2.2-6.2L19 11z" fill="currentColor" stroke="currentColor" strokeWidth={1.2} />, p),
+  expand: (p: IconProps = {}) =>
+    svg(<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />, p),
+  collapse: (p: IconProps = {}) =>
+    svg(<path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />, p),
   hand: (p: IconProps = {}) =>
     svg(
       <>

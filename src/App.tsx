@@ -85,6 +85,13 @@ interface HistoryState {
   future: DocumentState[];
 }
 
+// Fullscreen API with Safari/iPad vendor prefixes.
+type FsDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void> | void;
+};
+type FsElement = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
+
 export interface WorldRect {
   minX: number;
   minY: number;
@@ -163,7 +170,8 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [drawingMotionPath, setDrawingMotionPath] = useState(false);
-  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [timelineCollapsed, setTimelineCollapsed] = useState(true);
   // Which composites (layers) are currently playing — each plays independently.
   const [playingIds, setPlayingIds] = useState<Set<string>>(new Set());
   const anyPlaying = playingIds.size > 0;
@@ -392,6 +400,34 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Track fullscreen state (vendor-prefixed for Safari/iPad) so the button can
+  // flip between enter/exit.
+  useEffect(() => {
+    const sync = () => setIsFullscreen(!!(document.fullscreenElement || (document as FsDocument).webkitFullscreenElement));
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync);
+    };
+  }, []);
+
+  function toggleFullscreen() {
+    const doc = document as FsDocument;
+    const el = document.documentElement as FsElement;
+    if (document.fullscreenElement || doc.webkitFullscreenElement) {
+      (document.exitFullscreen?.bind(document) ?? doc.webkitExitFullscreen?.bind(doc))?.();
+      return;
+    }
+    const request = el.requestFullscreen?.bind(el) ?? el.webkitRequestFullscreen?.bind(el);
+    if (request) {
+      Promise.resolve(request()).catch(() => setNotice("Couldn’t enter fullscreen."));
+    } else {
+      // iPhone Safari (and some older iPads) have no element fullscreen API.
+      setNotice("Fullscreen isn’t supported here — on iPad, use Share → Add to Home Screen for a fullscreen app.");
+    }
+  }
 
   // Design mode IS the motif editor, so keep the active motif's part-edit overlay
   // mounted (with an empty selection) whenever we're in Design with the Select
@@ -805,8 +841,20 @@ export default function App() {
     };
   }
   // Apply a patch to every editable-selected layer's effects (seeding defaults).
+  // Flipping a layer from "no animation" to "animated" — whether by a single
+  // effect switch or by applying a recipe — auto-starts its playback so the user
+  // sees the result immediately; turning everything off stops it again.
   function updateEffects(patch: (e: LayerEffects) => LayerEffects) {
     const ids = editableIdsRef.current;
+    const justAnimated: string[] = [];
+    const justStopped: string[] = [];
+    for (const l of docRef.current.layers) {
+      if (!ids.has(l.id)) continue;
+      const wasAnimated = !!l.animation?.enabled || anyEffectEnabled(l.effects);
+      const nowAnimated = !!l.animation?.enabled || anyEffectEnabled(patch({ ...createEffects(), ...(l.effects ?? {}) }));
+      if (nowAnimated && !wasAnimated) justAnimated.push(l.id);
+      else if (!nowAnimated && wasAnimated) justStopped.push(l.id);
+    }
     updateLayers((ls) =>
       ls.map((l) =>
         ids.has(l.id)
@@ -814,7 +862,35 @@ export default function App() {
           : l
       )
     );
+    if (justAnimated.length || justStopped.length) {
+      setPlayingIds((prev) => {
+        const next = new Set(prev);
+        justAnimated.forEach((id) => next.add(id));
+        justStopped.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
   }
+
+  // Strip every animation (motion path + effects) from the editable selection.
+  function clearAnimations() {
+    const ids = editableIdsRef.current;
+    updateLayers((ls) =>
+      ls.map((l) =>
+        ids.has(l.id) && (l.animation || l.effects)
+          ? { ...l, animation: undefined, effects: undefined, updatedAt: Date.now() }
+          : l
+      )
+    );
+    setPlayingIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+    setDrawingMotionPath(false);
+  }
+  // How many selected layers actually carry an animation (for the Clear label).
+  const clearableCount = editableSelected.filter((l) => !!l.animation?.enabled || anyEffectEnabled(l.effects)).length;
 
   // Switch editor mode, tidying up mode-specific edit state. Component edit
   // belongs to Arrange, part edit to Design; neither should leak across.
@@ -1331,6 +1407,9 @@ export default function App() {
         <div className="tb-right">
           <button className="iconbtn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">{Icon.undo()}</button>
           <button className="iconbtn" onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">{Icon.redo()}</button>
+          <button className="iconbtn" onClick={toggleFullscreen} title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}>
+            {isFullscreen ? Icon.collapse() : Icon.expand()}
+          </button>
           <div className="tb-divider" />
           <div className="menu-wrap">
             <button className="btn btn-accent" onClick={() => setOpenMenu(openMenu === "export" ? null : "export")}>
@@ -1532,6 +1611,8 @@ export default function App() {
           onBeginAnimateCenter={beginAnimateCenter}
           onTogglePlayback={() => { if (primaryId) toggleLayerPlaying(primaryId); }}
           onDeleteAnimation={deletePrimaryAnimation}
+          onClearAnimations={clearAnimations}
+          clearableCount={clearableCount}
           onUpdateAnimation={updatePrimaryAnimation}
           onUpdateEffects={updateEffects}
           styleEditable={editableForControls || (partEdit?.partIds.length ?? 0) > 0}

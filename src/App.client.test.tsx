@@ -184,6 +184,28 @@ describe("App layer interactions", () => {
     expect(zoomVal()).not.toBe(zoomBefore);
   });
 
+  it("Animate mode starts with a collapsed timeline; enabling an effect auto-plays it", () => {
+    setMode("animate");
+    expect(container.querySelector(".timeline.is-collapsed")).toBeTruthy();
+    expect(canvas().querySelector("style")?.textContent ?? "").not.toContain("animation-play-state: running");
+    // Hitting the first switch (an effect card) starts playback automatically.
+    const spin = Array.from(container.querySelectorAll(".fx-head")).find((b) => b.textContent?.includes("Individual spin"));
+    click(spin);
+    expect(canvas().querySelector("style")?.textContent ?? "").toContain("animation-play-state: running");
+  });
+
+  it("Clear removes every animation from the selection and labels the count", () => {
+    setMode("arrange"); newLayer(); selectAll(); // two layers selected
+    setMode("animate");
+    const clear = () => Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Clear"));
+    expect(clear()).toBeFalsy(); // nothing to clear yet
+    click(Array.from(container.querySelectorAll(".fx-head")).find((b) => b.textContent?.includes("Individual spin")));
+    expect(clear()?.textContent).toContain("Clear 2 animations"); // both layers animated
+    click(clear());
+    expect(canvas().querySelector("style")?.textContent ?? "").not.toContain("@keyframes");
+    expect(clear()).toBeFalsy(); // button gone once nothing is animated
+  });
+
   it("Design mode renders the motif at rest — no animation CSS to offset the part overlay", () => {
     setMode("animate");
     drawMotionPath(); // applies a center-path animation
