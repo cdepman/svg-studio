@@ -16,6 +16,10 @@ import type { GBounds } from "./selectionBounds";
 import type { WorldRect } from "../App";
 import type { Center, DesignView, Layer, MotifPart, PartTransform, RepeatParams, Viewport } from "../types";
 
+// Trackpad pinch (reported as ctrl+wheel) sends much smaller deltas than a mouse
+// wheel notch; scale it up so pinch-to-zoom feels responsive.
+const PINCH_ZOOM_GAIN = 6;
+
 const CORNERS = ["tl", "tr", "bl", "br"] as const;
 const CORNER_CURSOR: Record<string, string> = {
   tl: "nwse-resize",
@@ -242,7 +246,11 @@ export function Canvas({
       e.preventDefault();
       if (e.ctrlKey || e.altKey || e.metaKey) {
         const r = svg.getBoundingClientRect();
-        onZoom(e.clientX - r.left, e.clientY - r.top, e.deltaY);
+        // The browser reports a trackpad pinch as ctrl+wheel with tiny per-event
+        // deltas; the zoom curve is tuned for big mouse-wheel notches, so pinch
+        // feels sluggish. Amplify it (Alt/⌘ + scroll keeps the raw wheel delta).
+        const gain = e.ctrlKey ? PINCH_ZOOM_GAIN : 1;
+        onZoom(e.clientX - r.left, e.clientY - r.top, e.deltaY * gain);
       } else {
         // deltaY>0 (scroll down) reveals lower content → move the content up.
         panBy(-e.deltaX, -e.deltaY);
