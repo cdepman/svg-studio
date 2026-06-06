@@ -11,6 +11,8 @@ export type MoveDir = "front" | "forward" | "backward" | "back";
 
 interface LayersPanelProps {
   mode: EditorMode;
+  /** Hide the search field (iOS: a focused text input breaks browser fullscreen). */
+  hideSearch?: boolean;
   /** The active layer whose motif composition is shown in Design mode. */
   primaryId: string | null;
   layers: Layer[];
@@ -135,6 +137,7 @@ function PartRow({
 
 export function LayersPanel({
   mode,
+  hideSearch,
   primaryId,
   layers,
   groups,
@@ -218,10 +221,12 @@ export function LayersPanel({
         </button>
       </div>
 
-      <div className="layer-search">
-        {Icon.search()}
-        <input placeholder="Search layers" value={query} onChange={(e) => setQuery(e.target.value)} />
-      </div>
+      {!hideSearch && (
+        <div className="layer-search">
+          {Icon.search()}
+          <input placeholder="Search layers" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+      )}
 
       <div className="layer-list scroll">
         {visibleRows.map((entry) => {

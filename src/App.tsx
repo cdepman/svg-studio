@@ -92,9 +92,10 @@ type FsDocument = Document & {
 };
 type FsElement = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
 
-// iOS/iPadOS (iPadOS reports as "MacIntel" + touch). Its element-fullscreen
-// blocks the on-screen keyboard and pops a "typing in full screen" phishing
-// warning on ANY text-field focus, so we don't use it there.
+// iOS/iPadOS (iPadOS reports as "MacIntel" + touch). Browser fullscreen there
+// forbids typing and pops a phishing warning on ANY text-field focus — so we
+// drop keyboard-summoning inputs (the layer search) on iOS to keep fullscreen
+// usable without that interruption.
 const IS_IOS =
   typeof navigator !== "undefined" &&
   (/iP(hone|od|ad)/.test(navigator.userAgent) ||
@@ -190,6 +191,7 @@ export default function App() {
       return next;
     });
   const [tool, setTool] = useState<"select" | "pencil" | "hand">("select");
+  const [touchDuplicate, setTouchDuplicate] = useState({ x: 88, y: 92, held: false, locked: false });
   const [pencil, setPencil] = useState<PencilSettings>(DEFAULT_PENCIL);
   // Current fill: the default for new shapes (no selection), or the selected
   // layer's color when one is selected. Always available via the swatch.
@@ -213,9 +215,69 @@ export default function App() {
   const [playTime, setPlayTime] = useState(0);
   const newLayerCount = useRef(1);
   const drawnCount = useRef(0);
+  const touchDuplicateActive = touchDuplicate.held || touchDuplicate.locked;
+  const touchDuplicateRef = useRef(touchDuplicate);
+  touchDuplicateRef.current = touchDuplicate;
+  const touchDuplicateActiveRef = useRef(false);
+  touchDuplicateActiveRef.current = touchDuplicateActive;
+  const touchDuplicateDrag = useRef<{
+    startX: number;
+    startY: number;
+    startButtonX: number;
+    startButtonY: number;
+    moved: boolean;
+  } | null>(null);
 
   const scene = useScene();
   const { viewport, setViewport, zoomAt, zoomBy: zoomViewportBy, panBy } = useViewport({ tx: 0, ty: 0, s: 1 });
+
+  const clampTouchDuplicate = (el: Element, x: number, y: number) => {
+    const area = el.closest(".canvas-area") as HTMLElement | null;
+    if (!area) return { x, y };
+    const r = area.getBoundingClientRect();
+    return {
+      x: Math.max(12, Math.min(r.width - 64, x)),
+      y: Math.max(12, Math.min(r.height - 64, y)),
+    };
+  };
+
+  const onTouchDuplicateDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    touchDuplicateDrag.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startButtonX: touchDuplicateRef.current.x,
+      startButtonY: touchDuplicateRef.current.y,
+      moved: false,
+    };
+    setTouchDuplicate((p) => ({ ...p, held: true }));
+  };
+
+  const onTouchDuplicateMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const d = touchDuplicateDrag.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (!d.moved && Math.hypot(dx, dy) > 6) d.moved = true;
+    if (!d.moved) return;
+    const next = clampTouchDuplicate(e.currentTarget, d.startButtonX + dx, d.startButtonY + dy);
+    setTouchDuplicate((p) => ({ ...p, x: next.x, y: next.y }));
+  };
+
+  const onTouchDuplicateUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const moved = !!touchDuplicateDrag.current?.moved;
+    touchDuplicateDrag.current = null;
+    setTouchDuplicate((p) => ({ ...p, held: false, locked: moved ? p.locked : !p.locked }));
+  };
+
+  const consumeTouchDuplicate = () => {
+    const p = touchDuplicateRef.current;
+    if (p.locked && !p.held) setTouchDuplicate((next) => ({ ...next, locked: false }));
+  };
 
   // --- Derived selection ---
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -428,12 +490,6 @@ export default function App() {
       (document.exitFullscreen?.bind(document) ?? doc.webkitExitFullscreen?.bind(doc))?.();
       return;
     }
-    // On iOS, browser fullscreen forbids typing (that scary popup on any field
-    // focus). A Home-Screen install gives true, typing-friendly fullscreen.
-    if (IS_IOS) {
-      setNotice("On iPad/iPhone, tap Share → “Add to Home Screen” for a fullscreen app. Safari blocks typing in browser fullscreen.");
-      return;
-    }
     const request = el.requestFullscreen?.bind(el) ?? el.webkitRequestFullscreen?.bind(el);
     if (request) {
       Promise.resolve(request()).catch(() => setNotice("Couldn’t enter fullscreen."));
@@ -565,8 +621,18 @@ export default function App() {
   // Remembers the layer grabbed for a move and whether it was part of a
   // multi-selection, so a click (no drag) on it can isolate it.
   const lastGrab = useRef<{ id: string; multi: boolean; prevSelected: string[] } | null>(null);
+
+  function duplicateLayerIdsForGesture(ids: string[]): string[] {
+    const { layers: next, newIds } = duplicateLayers(docRef.current.layers, new Set(ids));
+    if (newIds.length === 0) return ids;
+    commitDocument((doc) => ({ ...doc, layers: next, selectedIds: newIds }));
+    consumeTouchDuplicate();
+    return newIds;
+  }
+
   const moveBegin = useMoveDrag(scene, {
     onStart: () => setDragging(true),
+    onDuplicate: duplicateLayerIdsForGesture,
     onCancel: () => {
       // A pinch interrupted the grab: drop the move and undo the select-on-grab.
       if (lastGrab.current) updateSelection(() => lastGrab.current!.prevSelected);
@@ -606,9 +672,11 @@ export default function App() {
     },
     // Option/Alt at grab: duplicate the selected layers in place and select the
     // copies, so the resize then continues on the new layers. PRD alt-drag.
+    isDuplicateModifierActive: () => touchDuplicateActiveRef.current,
     onDuplicate: () => {
       const ids = editableIdsRef.current;
       if (ids.size === 0) return;
+      consumeTouchDuplicate();
       commitDocument((doc) => {
         const { layers: next, newIds } = duplicateLayers(doc.layers, new Set(ids));
         return { ...doc, layers: next, selectedIds: newIds };
@@ -851,14 +919,15 @@ export default function App() {
       selectSingle(id, true);
       return;
     }
+    const duplicateOnGrab = e.altKey || touchDuplicateActiveRef.current;
     const groupIds = groupForLayer(docRef.current.groups, id)?.layerIds ?? [id];
     const alreadySelected = selectedSet.has(id);
     const moveIds = alreadySelected
       ? [...editableIdsRef.current]
       : groupIds.filter((memberId) => docRef.current.layers.some((l) => l.id === memberId && l.visible && !l.locked));
     lastGrab.current = { id, multi: alreadySelected && editableIdsRef.current.size > 1, prevSelected: docRef.current.selectedIds };
-    if (!alreadySelected) selectSingle(id);
-    moveBegin(e, moveIds);
+    if (!alreadySelected && !duplicateOnGrab) selectSingle(id);
+    moveBegin(e, moveIds, duplicateOnGrab);
   };
 
   // Design mode: the part-edit overlay covers the whole canvas, so a click on a
@@ -1496,6 +1565,7 @@ export default function App() {
       <div className="middle">
         <LayersPanel
           mode={mode}
+          hideSearch={IS_IOS}
           primaryId={primaryId}
           layers={layers}
           groups={groups}
@@ -1526,6 +1596,20 @@ export default function App() {
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}
         >
+          <button
+            className={`touch-duplicate${touchDuplicateActive ? " is-active" : ""}`}
+            style={{ left: touchDuplicate.x, top: touchDuplicate.y }}
+            onPointerDown={onTouchDuplicateDown}
+            onPointerMove={onTouchDuplicateMove}
+            onPointerUp={onTouchDuplicateUp}
+            onPointerCancel={onTouchDuplicateUp}
+            aria-pressed={touchDuplicateActive}
+            aria-label="Duplicate modifier"
+            title="Duplicate modifier — hold or tap, then drag artwork to copy"
+          >
+            {Icon.duplicate({ size: 22 })}
+          </button>
+
           {/* tool rail. Select + Hand (pan) are available in every mode; the
               draw/eyedropper/fill tools only apply to Design editing. */}
           <div className="tool-rail">
@@ -1565,10 +1649,10 @@ export default function App() {
             </div>
           )}
 
-          {/* floating contextual toolbar. In Design the part overlay is always
-              mounted, so gate on an ACTIVE part selection (not its mere presence)
-              — the layer actions stay available until you actually grab a part. */}
-          {primary && tool === "select" && !componentEdit && !partEdit?.partIds.length && (
+          {/* floating contextual toolbar — the layer-level actions (Duplicate /
+              Center / Radialize / Delete) stay available whenever a layer is
+              selected, including while editing its parts in Design. */}
+          {primary && tool === "select" && !componentEdit && (
             <div className="ctx-toolbar">
               <span className="ctx-label">
                 <span className="ctx-swatch" /> <b>{selectedIds.length > 1 ? `${selectedIds.length} layers` : primary.name}</b>

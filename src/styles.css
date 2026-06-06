@@ -43,7 +43,14 @@
     font-size: 13px;
   }
   #root, .app { height: 100vh; }
-  .app { display: flex; flex-direction: column; }
+  /* Keep the whole UI inside the device safe areas (notch / status bar / home
+     indicator) — with viewport-fit=cover the page extends under them, so without
+     this the top bar slides under the iPad status bar. box-sizing:border-box
+     keeps the app exactly 100vh. */
+  .app {
+    display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
   .app[data-mode="design"]  { --mode: var(--pink); --mode-weak: var(--pink-weak); }
   .app[data-mode="arrange"] { --mode: var(--violet); --mode-weak: var(--violet-weak); }
   .app[data-mode="animate"] { --mode: var(--teal); --mode-weak: var(--teal-weak); }
@@ -256,6 +263,24 @@
   .canvas-area.tool-pencil .canvas-svg { cursor: crosshair; }
   .canvas-area.tool-hand .canvas-svg { cursor: grab; }
   .canvas-area.is-moving .canvas-svg { cursor: grabbing; }
+
+  .touch-duplicate {
+    position: absolute; z-index: 24; width: 54px; height: 54px; display: none; place-items: center;
+    padding: 0; border: 1px solid var(--line-2); border-radius: 50%;
+    background: color-mix(in oklch, var(--panel-2) 88%, transparent); color: var(--text);
+    box-shadow: 0 12px 34px rgba(0,0,0,0.42), inset 0 0 0 1px rgba(255,255,255,0.06);
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  .touch-duplicate:hover { background: var(--panel-3); }
+  .touch-duplicate.is-active {
+    background: var(--mode); color: #fff; border-color: transparent;
+    box-shadow: 0 0 0 6px var(--mode-weak), 0 14px 36px rgba(0,0,0,0.45);
+  }
+  .app[data-mode="animate"] .touch-duplicate.is-active { color: #06201d; }
+  .touch-duplicate svg { width: 22px; height: 22px; pointer-events: none; }
+  @media (any-pointer: coarse), (pointer: coarse) {
+    .touch-duplicate { display: grid; }
+  }
 
   /* tool rail (left edge) */
   .tool-rail {

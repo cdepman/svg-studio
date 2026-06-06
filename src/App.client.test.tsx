@@ -335,6 +335,31 @@ describe("App layer interactions", () => {
     expect(centerRoot().getAttribute("transform")).toBe("translate(30,50)");
   });
 
+  it("Option + grabbing artwork duplicates and moves the copy", () => {
+    setMode("arrange");
+    expect(rows()).toHaveLength(1);
+    const art = canvas().querySelector(".layer use.instance")!;
+    act(() => art.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 100, button: 0, altKey: true })));
+    act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 130, clientY: 150 })));
+    expect(rows()).toHaveLength(2);
+    const centers = Array.from(canvas().querySelectorAll(".layer-center-root")).map((e) => e.getAttribute("transform"));
+    expect(centers).toContain("translate(0,0)");
+    expect(centers).toContain("translate(30,50)");
+  });
+
+  it("the floating duplicate modifier makes the next artwork drag copy", () => {
+    setMode("arrange");
+    const modifier = titleBtn("Duplicate modifier")!;
+    act(() => modifier.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 88, clientY: 92, button: 0 })));
+    act(() => modifier.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 88, clientY: 92, button: 0 })));
+    expect(modifier.getAttribute("aria-pressed")).toBe("true");
+    const art = canvas().querySelector(".layer use.instance")!;
+    act(() => art.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 100, button: 0 })));
+    act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 125, clientY: 135 })));
+    expect(rows()).toHaveLength(2);
+    expect(modifier.getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("Option + dragging a resize handle duplicates and resizes the copy", () => {
     setMode("arrange");
     expect(rows()).toHaveLength(1);
