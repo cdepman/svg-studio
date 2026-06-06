@@ -22,6 +22,8 @@ export interface MoveDragOptions {
   onStart: () => void;
   /** Commit the gesture's total delta to every grabbed layer's center. */
   onCommit: (ids: string[], delta: Center) => void;
+  /** Option/touch-modifier at grab: duplicate the grabbed layers and move copies. */
+  onDuplicate?: (ids: string[]) => string[];
   /** Gesture aborted mid-flight (e.g. a pinch-zoom began) — nothing committed. */
   onCancel?: () => void;
 }
@@ -35,7 +37,20 @@ export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
     ids: string[];
     startWorld: Center;
     targets: MoveTarget[];
+    resolveTargets: boolean;
   } | null>(null);
+
+  const targetsFor = (ids: string[]): MoveTarget[] => {
+    const specs = scene.allSpecsRef.current;
+    return ids
+      .map((id) => specs.get(id))
+      .filter((s): s is NonNullable<typeof s> => !!s)
+      .map((s) => ({
+        repeatRoot: scene.resolveRepeatRoot(s.id),
+        startCenter: s.center,
+        reach: boundsReach(s.params, s.motifBox) * s.scale,
+      }));
+  };
 
   const paintGizmo = (dx: number, dy: number) => {
     const g = gesture.current;
@@ -64,6 +79,13 @@ export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
     const g = gesture.current;
     const e = loop.current.pending;
     if (!g || !e) return;
+    if (g.resolveTargets) {
+      const resolved = targetsFor(g.ids);
+      if (resolved.length > 0) {
+        g.targets = resolved;
+        g.resolveTargets = false;
+      }
+    }
     const w = scene.screenToWorld(e.clientX, e.clientY);
     const dx = w.x - g.startWorld.x;
     const dy = w.y - g.startWorld.y;
@@ -126,20 +148,18 @@ export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
 
   /** Begin moving the given layer ids from a pointerdown on the canvas/artwork. */
   const beginMove = useCallback(
-    (e: React.PointerEvent, ids: string[]) => {
-      const specs = scene.allSpecsRef.current;
-      const targets: MoveTarget[] = ids
-        .map((id) => specs.get(id))
-        .filter((s): s is NonNullable<typeof s> => !!s)
-        .map((s) => ({
-          repeatRoot: scene.resolveRepeatRoot(s.id),
-          startCenter: s.center,
-          reach: boundsReach(s.params, s.motifBox) * s.scale,
-        }));
-      if (targets.length === 0) return;
+    (e: React.PointerEvent, ids: string[], duplicate = e.altKey) => {
+      const moveIds = duplicate ? optsRef.current.onDuplicate?.(ids) ?? ids : ids;
+      const targets = duplicate ? [] : targetsFor(moveIds);
+      if (!duplicate && targets.length === 0) return;
       e.preventDefault();
       (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-      gesture.current = { ids, startWorld: scene.screenToWorld(e.clientX, e.clientY), targets };
+      gesture.current = {
+        ids: moveIds,
+        startWorld: scene.screenToWorld(e.clientX, e.clientY),
+        targets,
+        resolveTargets: duplicate,
+      };
       const lr = scene.layersRootRef.current;
       if (lr) lr.style.pointerEvents = "none";
       optsRef.current.onStart();

@@ -109,7 +109,7 @@ export function PartEditLayer(props: PartEditLayerProps) {
   optsRef.current = props;
   const partSpaceRef = useRef<SVGGElement>(null);
   const ghostRef = useRef<SVGGElement>(null);
-  const [marquee, setMarquee] = useState<Rect | null>(null);
+  const [worldMarquee, setWorldMarquee] = useState<Rect | null>(null);
   const drag = useRef<{
     parts: MotifPart[];
     mode: Mode;
@@ -313,8 +313,12 @@ export function PartEditLayer(props: PartEditLayerProps) {
     const d = marqueeDrag.current;
     if (!d) return;
     // A pinch started mid-drag → abandon the marquee (no rubber-band, no select).
-    if (optsRef.current.pinchingRef?.current) { marqueeDrag.current = null; setMarquee(null); return; }
-    setMarquee(normRect(d.start, toLocal(e.clientX, e.clientY)));
+    if (optsRef.current.pinchingRef?.current) {
+      marqueeDrag.current = null;
+      setWorldMarquee(null);
+      return;
+    }
+    setWorldMarquee(normRect(d.worldStart, optsRef.current.scene.screenToWorld(e.clientX, e.clientY)));
   }, [toLocal]);
 
   const onMarqueeUp = useCallback((e: PointerEvent) => {
@@ -322,16 +326,19 @@ export function PartEditLayer(props: PartEditLayerProps) {
     window.removeEventListener("pointermove", onMarqueeMove);
     window.removeEventListener("pointerup", onMarqueeUp);
     marqueeDrag.current = null;
-    if (!d || optsRef.current.pinchingRef?.current) { setMarquee(null); return; }
+    if (!d || optsRef.current.pinchingRef?.current) {
+      setWorldMarquee(null);
+      return;
+    }
     const rect = normRect(d.start, toLocal(e.clientX, e.clientY));
     const worldRect = normRect(d.worldStart, optsRef.current.scene.screenToWorld(e.clientX, e.clientY));
     if (optsRef.current.onSelectLayersByRect?.(worldRect, d.additive, optsRef.current.layer.id)) {
-      setMarquee(null);
+      setWorldMarquee(null);
       return;
     }
     const ids = parts.filter((part) => rectIntersects(rect, partBox(part))).map((part) => part.id);
     optsRef.current.onSelectParts(ids, d.additive);
-    setMarquee(null);
+    setWorldMarquee(null);
   }, [onMarqueeMove, parts, toLocal]);
 
   const beginMarquee = (e: React.PointerEvent) => {
@@ -343,8 +350,9 @@ export function PartEditLayer(props: PartEditLayerProps) {
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     const start = toLocal(e.clientX, e.clientY);
-    marqueeDrag.current = { start, worldStart: props.scene.screenToWorld(e.clientX, e.clientY), additive: e.shiftKey || e.metaKey || e.ctrlKey };
-    setMarquee(normRect(start, start));
+    const worldStart = props.scene.screenToWorld(e.clientX, e.clientY);
+    marqueeDrag.current = { start, worldStart, additive: e.shiftKey || e.metaKey || e.ctrlKey };
+    setWorldMarquee(normRect(worldStart, worldStart));
     window.addEventListener("pointermove", onMarqueeMove);
     window.addEventListener("pointerup", onMarqueeUp);
   };
@@ -358,6 +366,15 @@ export function PartEditLayer(props: PartEditLayerProps) {
 
   return (
     <g className="part-edit-overlay" transform={`translate(${layer.center.x},${layer.center.y})`}>
+      {worldMarquee && (
+        <rect
+          className="part-marquee"
+          x={worldMarquee.minX - layer.center.x}
+          y={worldMarquee.minY - layer.center.y}
+          width={worldMarquee.maxX - worldMarquee.minX}
+          height={worldMarquee.maxY - worldMarquee.minY}
+        />
+      )}
       <g transform={`scale(${layer.scale})`}>
         <g transform={instanceTransform(layer.params, index)}>
           <g ref={partSpaceRef} transform={`translate(${-layer.motif.anchorX},${-layer.motif.anchorY})`}>
@@ -465,15 +482,6 @@ export function PartEditLayer(props: PartEditLayerProps) {
                   <circle className="part-rotate-knob" cx={(selectedUnion.minX + selectedUnion.maxX) / 2} cy={selectedUnion.minY - groupGap} r={groupHandle * 0.6} />
                 </g>
               </g>
-            )}
-            {marquee && (
-              <rect
-                className="part-marquee"
-                x={marquee.minX}
-                y={marquee.minY}
-                width={marquee.maxX - marquee.minX}
-                height={marquee.maxY - marquee.minY}
-              />
             )}
           </g>
         </g>

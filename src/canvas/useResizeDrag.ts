@@ -22,6 +22,7 @@ export interface ResizeDragOptions {
   /** Option/Alt at grab: duplicate the selection and select the copies, so the
    *  resize continues on the NEW layers while the originals stay put. */
   onDuplicate: () => void;
+  isDuplicateModifierActive?: () => boolean;
   /** Gesture aborted mid-flight (e.g. a pinch-zoom began) — nothing committed. */
   onCancel?: () => void;
 }
@@ -156,7 +157,7 @@ export function useResizeDrag(scene: Scene, opts: ResizeDragOptions) {
       const start = scene.screenToWorld(e.clientX, e.clientY);
       // Anchor/startDist come from the current selection's union; the duplicated
       // copies share the same centers + scales, so the union is identical.
-      const duplicate = e.altKey;
+      const duplicate = e.altKey || !!optsRef.current.isDuplicateModifierActive?.();
       if (duplicate) optsRef.current.onDuplicate();
       gesture.current = {
         anchor,

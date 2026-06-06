@@ -92,6 +92,14 @@ type FsDocument = Document & {
 };
 type FsElement = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
 
+// iOS/iPadOS (iPadOS reports as "MacIntel" + touch). Its element-fullscreen
+// blocks the on-screen keyboard and pops a "typing in full screen" phishing
+// warning on ANY text-field focus, so we don't use it there.
+const IS_IOS =
+  typeof navigator !== "undefined" &&
+  (/iP(hone|od|ad)/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+
 export interface WorldRect {
   minX: number;
   minY: number;
@@ -420,11 +428,16 @@ export default function App() {
       (document.exitFullscreen?.bind(document) ?? doc.webkitExitFullscreen?.bind(doc))?.();
       return;
     }
+    // On iOS, browser fullscreen forbids typing (that scary popup on any field
+    // focus). A Home-Screen install gives true, typing-friendly fullscreen.
+    if (IS_IOS) {
+      setNotice("On iPad/iPhone, tap Share → “Add to Home Screen” for a fullscreen app. Safari blocks typing in browser fullscreen.");
+      return;
+    }
     const request = el.requestFullscreen?.bind(el) ?? el.webkitRequestFullscreen?.bind(el);
     if (request) {
       Promise.resolve(request()).catch(() => setNotice("Couldn’t enter fullscreen."));
     } else {
-      // iPhone Safari (and some older iPads) have no element fullscreen API.
       setNotice("Fullscreen isn’t supported here — on iPad, use Share → Add to Home Screen for a fullscreen app.");
     }
   }
