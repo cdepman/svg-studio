@@ -121,6 +121,13 @@ export function duplicatePart(motif: Motif, partId: string, newId: string, trans
   return motifWithParts(motif, parts);
 }
 
+/** Remove one or more parts by id (returns a new motif with derived innerHtml). */
+export function removeParts(motif: Motif, ids: Set<string>): Motif {
+  if (!motif.parts) return motif;
+  const parts = motif.parts.filter((p) => !ids.has(p.id));
+  return parts.length === motif.parts.length ? motif : motifWithParts(motif, parts);
+}
+
 /** Reorder a part to sit just before `targetId` (paint order). */
 export function reorderParts(motif: Motif, draggedId: string, targetId: string): Motif {
   if (!motif.parts || draggedId === targetId) return motif;

@@ -50,17 +50,63 @@ function pressurePoints(worldPoints: readonly (Center | PencilPoint)[], pressure
   return worldPoints.map((p) => [p.x, p.y, usePressure ? ("pressure" in p ? p.pressure : 0.5) : 0.5]);
 }
 
-const avg = (a: number, b: number) => (a + b) / 2;
 const f = (n: number) => Math.round(n * 100) / 100;
 
-function centerline(worldPoints: readonly (Center | PencilPoint)[], worldSize: number, smoothing: number, pressure = 0): number[][] {
-  return getStrokePoints(
+const dist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const triArea = (a: number[], b: number[], c: number[]) =>
+  Math.abs((a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1])) / 2);
+
+function simplifyCenterline(points: number[][], worldSize: number, smoothing: number, closed: boolean): number[][] {
+  if (points.length <= 3) return points;
+  const t = Math.max(0, Math.min(1, smoothing / 100));
+  const minGap = Math.max(1, worldSize * (0.5 + t * 0.9));
+  const tolerance = Math.max(2.5, worldSize * (1.8 + t * 3.2));
+  const threshold = tolerance * tolerance * 0.5;
+  const maxPoints = Math.round(48 - t * 32);
+
+  const compact: number[][] = [];
+  for (const p of points) {
+    const prev = compact[compact.length - 1];
+    if (!prev || dist(prev, p) >= minGap) compact.push(p);
+  }
+  if (compact.length <= 3) return compact;
+
+  const pts = closed && dist(compact[0], compact[compact.length - 1]) < Math.max(worldSize * 3, 6)
+    ? compact.slice(0, -1)
+    : compact.slice();
+  const minPoints = closed ? 4 : 2;
+
+  while (pts.length > minPoints) {
+    let bestIdx = -1;
+    let bestArea = Infinity;
+    const start = closed ? 0 : 1;
+    const end = closed ? pts.length : pts.length - 1;
+    for (let i = start; i < end; i++) {
+      const prev = pts[(i - 1 + pts.length) % pts.length];
+      const cur = pts[i];
+      const next = pts[(i + 1) % pts.length];
+      const area = triArea(prev, cur, next);
+      if (area < bestArea) {
+        bestArea = area;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx < 0 || (bestArea >= threshold && pts.length <= maxPoints)) break;
+    pts.splice(bestIdx, 1);
+  }
+
+  return closed ? [...pts, pts[0]] : pts;
+}
+
+function centerline(worldPoints: readonly (Center | PencilPoint)[], worldSize: number, smoothing: number, pressure = 0, closed = false): number[][] {
+  const raw = getStrokePoints(
     pressurePoints(worldPoints, pressure),
     strokeOptions(worldSize, smoothing, pressure)
   ).map((s) => s.point);
+  return simplifyCenterline(raw, worldSize, smoothing, closed);
 }
 
-/** Canonical points -> quadratic SVG path. Closed paths get a trailing Z. */
+/** Canonical points -> compact cubic SVG path. Closed paths get a trailing Z. */
 export function svgPathFromStroke(points: number[][], closed = true): string {
   const len = points.length;
   if (len < 2) return "";
@@ -72,17 +118,20 @@ export function svgPathFromStroke(points: number[][], closed = true): string {
     const d = `M${f(points[0][0])},${f(points[0][1])} Q${f(points[1][0])},${f(points[1][1])} ${f(points[2][0])},${f(points[2][1])}`;
     return closed ? `${d} Z` : d;
   }
-  let a = points[0];
-  let b = points[1];
-  const c = points[2];
-  let d = `M${f(a[0])},${f(a[1])} Q${f(b[0])},${f(b[1])} ${f(avg(b[0], c[0]))},${f(avg(b[1], c[1]))} T`;
-  for (let i = 2, max = len - 1; i < max; i++) {
-    a = points[i];
-    b = points[i + 1];
-    d += `${f(avg(a[0], b[0]))},${f(avg(a[1], b[1]))} `;
+  const pts = closed && dist(points[0], points[len - 1]) < 0.001 ? points.slice(0, -1) : points;
+  const n = pts.length;
+  let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+  const segs = closed ? n : n - 1;
+  for (let i = 0; i < segs; i++) {
+    const p0 = pts[closed ? (i - 1 + n) % n : Math.max(0, i - 1)];
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % n];
+    const p3 = pts[closed ? (i + 2) % n : Math.min(n - 1, i + 2)];
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+    const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    d += ` C${f(c1[0])},${f(c1[1])} ${f(c2[0])},${f(c2[1])} ${f(p2[0])},${f(p2[1])}`;
   }
-  const out = d.trim();
-  return closed ? `${out} Z` : out;
+  return closed ? `${d} Z` : d;
 }
 
 function pointsBox(points: number[][], pad: number): Box {
@@ -116,7 +165,7 @@ export function pencilPreviewPath(
   closed = false
 ): string {
   if (worldPoints.length < 2) return "";
-  return svgPathFromStroke(centerline(worldPoints, Math.max(1, worldStrokeWidth), smoothing, pressure), closed);
+  return svgPathFromStroke(centerline(worldPoints, Math.max(1, worldStrokeWidth), smoothing, pressure, closed), closed);
 }
 
 /** Smallest bbox dimension (world units) below which a stroke is discarded. PRD §18. */
@@ -158,7 +207,7 @@ export function strokeToFilledPath(
   if (raw.width < MIN_SIZE && raw.height < MIN_SIZE) return null;
   const effectiveStrokeWidth = closed ? Math.max(0, strokeWidth) : Math.max(0.5, strokeWidth);
   const smoothingSize = Math.max(1, worldStrokeWidth);
-  const points = centerline(worldPoints, smoothingSize, smoothing, pressure);
+  const points = centerline(worldPoints, smoothingSize, smoothing, pressure, closed);
   const d = svgPathFromStroke(points, closed);
   if (!d) return null;
   const box = pointsBox(points, effectiveStrokeWidth / 2);

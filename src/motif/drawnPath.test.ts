@@ -46,6 +46,29 @@ describe("createDrawnMotif (PRD §13)", () => {
     expect(drawn!.motif.innerHtml).toContain('stroke-width="2"');
     expect(drawn!.motif.innerHtml).not.toContain("Z");
   });
+
+  it("simplifies a straightforward pencil line into a small cubic path", () => {
+    const points = Array.from({ length: 80 }, (_, i) => ({
+      x: i * 3,
+      y: Math.sin(i / 5) * 1.5,
+    }));
+    const drawn = createDrawnMotif(points, 2, 80, "#123456", "#0a0a0a", 2, 0, false);
+    expect(drawn).not.toBeNull();
+    const commands = drawn!.motif.innerHtml.match(/[CLQ]/g) ?? [];
+    expect(commands.length).toBeLessThanOrEqual(8);
+  });
+
+  it("keeps a small closed circle compact instead of emitting every sampled point", () => {
+    const points = Array.from({ length: 72 }, (_, i) => {
+      const a = (i / 72) * Math.PI * 2;
+      return { x: 100 + Math.cos(a) * 24, y: 100 + Math.sin(a) * 24 };
+    });
+    points.push(points[0]);
+    const drawn = createDrawnMotif(points, 2, 80, "#123456", "#0a0a0a", 2, 0, true);
+    expect(drawn).not.toBeNull();
+    const commands = drawn!.motif.innerHtml.match(/[CLQ]/g) ?? [];
+    expect(commands.length).toBeLessThanOrEqual(12);
+  });
 });
 
 describe("svgPathFromStroke", () => {

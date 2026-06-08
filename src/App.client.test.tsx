@@ -85,6 +85,22 @@ describe("App layer interactions", () => {
     expect(layerRows()[1].className).toContain("is-selected");
   });
 
+  it("Design: the part toolbar duplicates and deletes the selected part", () => {
+    // Default Design mode; the default motif's parts show under the layer.
+    const partRows = () => Array.from(container.querySelectorAll(".layer-row.part-row"));
+    const ctxBtn = (label: string) =>
+      Array.from(container.querySelectorAll(".ctx-toolbar button")).find((b) => b.textContent?.includes(label));
+    const startCount = partRows().length;
+    expect(startCount).toBeGreaterThan(0);
+    // Select a part via its panel row → the toolbar switches to part actions.
+    act(() => partRows()[0].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(ctxBtn("Duplicate")).toBeTruthy();
+    click(ctxBtn("Duplicate"));
+    expect(partRows().length).toBe(startCount + 1);
+    click(ctxBtn("Delete"));
+    expect(partRows().length).toBe(startCount);
+  });
+
   it("New Layer adds a second layer and selects it", () => {
     setMode("arrange");
     newLayer();
@@ -150,6 +166,16 @@ describe("App layer interactions", () => {
     // the whole picker drag collapses to ONE history step → one undo empties it.
     click(titleBtn("Undo"));
     expect((titleBtn("Undo") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("undo still fires when a non-text input (a range slider) has focus", () => {
+    setMode("arrange");
+    newLayer();
+    expect(rows()).toHaveLength(2);
+    // A focused range slider must NOT swallow ⌘Z (it isn't text entry).
+    const slider = container.querySelector('input[type="range"]')!;
+    act(() => slider.dispatchEvent(new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true })));
+    expect(rows()).toHaveLength(1);
   });
 
   it("keyboard undo and redo shortcuts use the current document state", () => {
@@ -357,6 +383,27 @@ describe("App layer interactions", () => {
     act(() => art.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 100, button: 0 })));
     act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 125, clientY: 135 })));
     expect(rows()).toHaveLength(2);
+    expect(modifier.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("the floating duplicate modifier still allows selecting before duplicate-dragging", () => {
+    setMode("arrange");
+    newLayer();
+    const modifier = titleBtn("Duplicate modifier")!;
+    act(() => modifier.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 88, clientY: 92, button: 0 })));
+    act(() => modifier.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 88, clientY: 92, button: 0 })));
+    const backLayerArt = canvas().querySelectorAll(".layer[data-layer-id]")[0].querySelector("use.instance")!;
+    act(() => backLayerArt.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 100, button: 0 })));
+    act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 100, clientY: 100 })));
+    expect(rows()).toHaveLength(2);
+    expect(rows()[1].className).toContain("selected");
+    expect(modifier.getAttribute("aria-pressed")).toBe("true");
+
+    const selectedBackLayerArt = canvas().querySelectorAll(".layer[data-layer-id]")[0].querySelector("use.instance")!;
+    act(() => selectedBackLayerArt.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 100, button: 0 })));
+    act(() => window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 130, clientY: 140 })));
+    act(() => window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 130, clientY: 140 })));
+    expect(rows()).toHaveLength(3);
     expect(modifier.getAttribute("aria-pressed")).toBe("false");
   });
 

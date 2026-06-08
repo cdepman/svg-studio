@@ -38,6 +38,8 @@ export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
     startWorld: Center;
     targets: MoveTarget[];
     resolveTargets: boolean;
+    duplicate: boolean;
+    duplicated: boolean;
   } | null>(null);
 
   const targetsFor = (ids: string[]): MoveTarget[] => {
@@ -79,6 +81,18 @@ export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
     const g = gesture.current;
     const e = loop.current.pending;
     if (!g || !e) return;
+    const w = scene.screenToWorld(e.clientX, e.clientY);
+    const dx = w.x - g.startWorld.x;
+    const dy = w.y - g.startWorld.y;
+    if (g.duplicate && !g.duplicated && Math.hypot(dx, dy) >= 1) {
+      const newIds = optsRef.current.onDuplicate?.(g.ids) ?? g.ids;
+      if (newIds.length > 0) {
+        g.ids = newIds;
+        g.targets = [];
+        g.resolveTargets = true;
+      }
+      g.duplicated = true;
+    }
     if (g.resolveTargets) {
       const resolved = targetsFor(g.ids);
       if (resolved.length > 0) {
@@ -86,9 +100,6 @@ export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
         g.resolveTargets = false;
       }
     }
-    const w = scene.screenToWorld(e.clientX, e.clientY);
-    const dx = w.x - g.startWorld.x;
-    const dy = w.y - g.startWorld.y;
     for (const t of g.targets) {
       t.repeatRoot?.setAttribute(
         "transform",
@@ -120,7 +131,12 @@ export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
       gesture.current = null;
       if (!g) return;
       const w = scene.screenToWorld(e.clientX, e.clientY);
-      optsRef.current.onCommit(g.ids, { x: w.x - g.startWorld.x, y: w.y - g.startWorld.y });
+      const delta = { x: w.x - g.startWorld.x, y: w.y - g.startWorld.y };
+      if (g.duplicate && !g.duplicated && Math.hypot(delta.x, delta.y) >= 1) {
+        const newIds = optsRef.current.onDuplicate?.(g.ids) ?? g.ids;
+        if (newIds.length > 0) g.ids = newIds;
+      }
+      optsRef.current.onCommit(g.ids, delta);
     },
     [onMove, scene]
   );
@@ -149,16 +165,17 @@ export function useMoveDrag(scene: Scene, opts: MoveDragOptions) {
   /** Begin moving the given layer ids from a pointerdown on the canvas/artwork. */
   const beginMove = useCallback(
     (e: React.PointerEvent, ids: string[], duplicate = e.altKey) => {
-      const moveIds = duplicate ? optsRef.current.onDuplicate?.(ids) ?? ids : ids;
-      const targets = duplicate ? [] : targetsFor(moveIds);
-      if (!duplicate && targets.length === 0) return;
+      const targets = targetsFor(ids);
+      if (targets.length === 0) return;
       e.preventDefault();
       (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
       gesture.current = {
-        ids: moveIds,
+        ids,
         startWorld: scene.screenToWorld(e.clientX, e.clientY),
         targets,
-        resolveTargets: duplicate,
+        resolveTargets: false,
+        duplicate,
+        duplicated: false,
       };
       const lr = scene.layersRootRef.current;
       if (lr) lr.style.pointerEvents = "none";

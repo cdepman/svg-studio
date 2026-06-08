@@ -73,6 +73,7 @@ function Host({ layers, selected }: { layers: Layer[]; selected: Set<string> }) 
       onMarqueeSelect={() => {}}
       onMotionPathDrawn={() => {}}
       onSelectLayersByRect={() => false}
+      isDuplicateModifierActive={() => false}
       onResizePointerDown={() => {}}
       onRotatePointerDown={() => {}}
       onZoom={() => {}}

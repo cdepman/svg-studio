@@ -25,6 +25,7 @@ import {
   partStrokeColor,
   partStrokeWidth,
   recolorMotif,
+  removeParts,
   reorderParts,
   restrokeMotif,
   setMotifStrokeWidth,
@@ -926,7 +927,7 @@ export default function App() {
       ? [...editableIdsRef.current]
       : groupIds.filter((memberId) => docRef.current.layers.some((l) => l.id === memberId && l.visible && !l.locked));
     lastGrab.current = { id, multi: alreadySelected && editableIdsRef.current.size > 1, prevSelected: docRef.current.selectedIds };
-    if (!alreadySelected && !duplicateOnGrab) selectSingle(id);
+    if (!alreadySelected) selectSingle(id);
     moveBegin(e, moveIds, duplicateOnGrab);
   };
 
@@ -1314,10 +1315,38 @@ export default function App() {
   // Alt-drag a part to copy it: the copy takes the gesture's transform; select it.
   const onDuplicatePart = (layerId: string, partId: string, transform: PartTransform) => {
     const newId = newPartId();
+    consumeTouchDuplicate();
     updateLayers((ls) =>
       updateLayer(ls, layerId, (l) => ({ ...l, motif: duplicatePart(l.motif, partId, newId, transform), updatedAt: Date.now() }))
     );
     setPartEdit((prev) => ({ layerId, partIds: [newId], index: prev?.layerId === layerId ? prev.index : 0 }));
+  };
+  // Toolbar "Duplicate" while editing parts: copy each selected part (nudged so
+  // the copy is visible) and select the copies.
+  const duplicateSelectedParts = () => {
+    const pe = docRef.current.partEdit;
+    if (!pe?.partIds.length) return;
+    const mapping = pe.partIds.map((partId) => ({ partId, newId: newPartId() }));
+    updateLayers((ls) =>
+      updateLayer(ls, pe.layerId, (l) => {
+        let motif = l.motif;
+        for (const { partId, newId } of mapping) {
+          const src = motif.parts?.find((p) => p.id === partId);
+          if (!src) continue;
+          motif = duplicatePart(motif, partId, newId, { ...src.transform, tx: src.transform.tx + 8, ty: src.transform.ty + 8 });
+        }
+        return { ...l, motif, updatedAt: Date.now() };
+      })
+    );
+    setPartEdit({ layerId: pe.layerId, partIds: mapping.map((m) => m.newId), index: pe.index });
+  };
+  // Toolbar "Delete" while editing parts: remove the selected parts.
+  const deleteSelectedParts = () => {
+    const pe = docRef.current.partEdit;
+    if (!pe?.partIds.length) return;
+    const ids = new Set(pe.partIds);
+    updateLayers((ls) => updateLayer(ls, pe.layerId, (l) => ({ ...l, motif: removeParts(l.motif, ids), updatedAt: Date.now() })));
+    setPartEdit({ layerId: pe.layerId, partIds: [], index: pe.index });
   };
   const onMove = (id: string, dir: MoveDir) => {
     updateLayers((ls) => {
@@ -1364,7 +1393,13 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+      // Only a TEXT-entry field should swallow shortcuts (so its own ⌘Z edits
+      // text). Range / color / checkbox inputs — e.g. the pencil's sliders or the
+      // fill swatch — must NOT block undo & friends across the app.
+      const inputType = t?.tagName === "INPUT" ? ((t as HTMLInputElement).type || "text").toLowerCase() : "";
+      const NON_TEXT = ["range", "color", "checkbox", "radio", "button", "submit", "reset", "file"];
+      const typing =
+        !!t && (t.tagName === "TEXTAREA" || t.isContentEditable || (t.tagName === "INPUT" && !NON_TEXT.includes(inputType)));
       const { primaryId: id } = docRef.current;
       const mod = e.metaKey || e.ctrlKey;
 
@@ -1412,12 +1447,15 @@ export default function App() {
       }
       if (mod && e.key.toLowerCase() === "d") {
         e.preventDefault();
-        onDuplicateSelected();
+        // Editing parts → duplicate the selected parts; else the selected layers.
+        if (docRef.current.partEdit?.partIds.length) duplicateSelectedParts();
+        else onDuplicateSelected();
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        onDeleteSelected();
+        if (docRef.current.partEdit?.partIds.length) deleteSelectedParts();
+        else onDeleteSelected();
         return;
       }
       if (mod && e.key === "]") {
@@ -1649,19 +1687,31 @@ export default function App() {
             </div>
           )}
 
-          {/* floating contextual toolbar — the layer-level actions (Duplicate /
-              Center / Radialize / Delete) stay available whenever a layer is
-              selected, including while editing its parts in Design. */}
+          {/* floating contextual toolbar. Editing parts → part actions
+              (duplicate / delete the selected pieces); otherwise → layer actions.
+              Always present when a layer is selected in Select mode. */}
           {primary && tool === "select" && !componentEdit && (
             <div className="ctx-toolbar">
-              <span className="ctx-label">
-                <span className="ctx-swatch" /> <b>{selectedIds.length > 1 ? `${selectedIds.length} layers` : primary.name}</b>
-                {selectedIds.length <= 1 && <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>{primary.params.count}×</span>}
-              </span>
-              <button className="ctx-btn" onClick={onDuplicateSelected}>{Icon.duplicate({ size: 15 })} Duplicate</button>
-              <button className="ctx-btn" onClick={resetCenter} disabled={!editableForControls}>{Icon.target({ size: 15 })} Center</button>
-              {canRadialize && <button className="ctx-btn" onClick={radializePrimary}>{Icon.sparkle({ size: 15 })} Radialize</button>}
-              <button className="ctx-btn danger" onClick={onDeleteSelected}>{Icon.trash({ size: 15 })} Delete</button>
+              {partEdit?.partIds.length ? (
+                <>
+                  <span className="ctx-label">
+                    <span className="ctx-swatch" /> <b>{partEdit.partIds.length > 1 ? `${partEdit.partIds.length} parts` : "1 part"}</b>
+                  </span>
+                  <button className="ctx-btn" onClick={duplicateSelectedParts}>{Icon.duplicate({ size: 15 })} Duplicate</button>
+                  <button className="ctx-btn danger" onClick={deleteSelectedParts}>{Icon.trash({ size: 15 })} Delete</button>
+                </>
+              ) : (
+                <>
+                  <span className="ctx-label">
+                    <span className="ctx-swatch" /> <b>{selectedIds.length > 1 ? `${selectedIds.length} layers` : primary.name}</b>
+                    {selectedIds.length <= 1 && <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--faint)" }}>{primary.params.count}×</span>}
+                  </span>
+                  <button className="ctx-btn" onClick={onDuplicateSelected}>{Icon.duplicate({ size: 15 })} Duplicate</button>
+                  <button className="ctx-btn" onClick={resetCenter} disabled={!editableForControls}>{Icon.target({ size: 15 })} Center</button>
+                  {canRadialize && <button className="ctx-btn" onClick={radializePrimary}>{Icon.sparkle({ size: 15 })} Radialize</button>}
+                  <button className="ctx-btn danger" onClick={onDeleteSelected}>{Icon.trash({ size: 15 })} Delete</button>
+                </>
+              )}
             </div>
           )}
 
@@ -1704,6 +1754,7 @@ export default function App() {
             onMarqueeSelect={onMarqueeSelect}
             onMotionPathDrawn={onMotionPathDrawn}
             onSelectLayersByRect={selectLayersByRect}
+            isDuplicateModifierActive={() => touchDuplicateActiveRef.current}
             onResizePointerDown={onResizePointerDown}
             onRotatePointerDown={onRotatePointerDown}
             onZoom={zoomAt}

@@ -82,6 +82,7 @@ interface CanvasProps {
   onMotionPathDrawn: (points: Center[]) => void;
   /** Design part-edit overlay can marquee-select other layers above/below it. */
   onSelectLayersByRect: (rect: WorldRect, additive: boolean, excludeLayerId?: string) => boolean;
+  isDuplicateModifierActive: () => boolean;
   onResizePointerDown: (e: React.PointerEvent) => void;
   onRotatePointerDown: (e: React.PointerEvent) => void;
   /** Zoom the canvas at an svg-local point. */
@@ -130,6 +131,7 @@ export function Canvas({
   onMarqueeSelect,
   onMotionPathDrawn,
   onSelectLayersByRect,
+  isDuplicateModifierActive,
   onResizePointerDown,
   onRotatePointerDown,
   onZoom,
@@ -459,7 +461,12 @@ export function Canvas({
       if (layer && !layer.locked) {
         const iEl = closestFromEvent(e, "[data-i]");
         const i = iEl != null ? parseInt(iEl.getAttribute("data-i") ?? "0", 10) : 0;
-        if (tool === "select" && dblClickTarget === "part" && (layer.motif.parts?.length ?? 0) > 0) {
+        if (
+          tool === "select" &&
+          dblClickTarget === "part" &&
+          !isDuplicateModifierActive() &&
+          (layer.motif.parts?.length ?? 0) > 0
+        ) {
           e.preventDefault();
           const visibleParts = (layer.motif.parts ?? []).filter((p) => p.visible);
           const fallbackPart = visibleParts[visibleParts.length - 1]?.id;
@@ -801,6 +808,7 @@ export function Canvas({
                 pinchingRef={pinchingRef}
                 onPickLayer={onPickLayer}
                 onSelectLayersByRect={onSelectLayersByRect}
+                isDuplicateModifierActive={isDuplicateModifierActive}
                 handlePx={handlePx}
                 rotateGapPx={rotateGapPx}
               />

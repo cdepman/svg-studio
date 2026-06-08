@@ -43,6 +43,7 @@ interface PartEditLayerProps {
   onPickLayer?: (clientX: number, clientY: number) => boolean;
   /** A marquee over other layers selects those layers instead of motif parts. */
   onSelectLayersByRect?: (rect: Rect, additive: boolean, excludeLayerId?: string) => boolean;
+  isDuplicateModifierActive?: () => boolean;
 }
 
 // The marquee/select surface spans far beyond the motif box so a selection drag
@@ -224,7 +225,7 @@ export function PartEditLayer(props: PartEditLayerProps) {
       if (!d.clickAdditive) optsRef.current.onSelectParts([], false);
       return;
     }
-    if (d.alt && d.parts.length === 1) optsRef.current.onDuplicatePart(d.parts[0].id, d.latest[d.parts[0].id]);
+    if (d.alt && d.moved && d.parts.length === 1) optsRef.current.onDuplicatePart(d.parts[0].id, d.latest[d.parts[0].id]);
     else if (d.parts.length === 1) optsRef.current.onCommitTransform(d.parts[0].id, d.latest[d.parts[0].id]);
     else optsRef.current.onCommitTransforms(d.latest);
   }, [onMove]);
@@ -261,7 +262,7 @@ export function PartEditLayer(props: PartEditLayerProps) {
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     const start = toLocal(e.clientX, e.clientY);
     const startTransforms = Object.fromEntries(dragParts.map((part) => [part.id, part.transform]));
-    const alt = e.altKey && dragParts.length === 1;
+    const alt = (e.altKey || !!optsRef.current.isDuplicateModifierActive?.()) && dragParts.length === 1;
     drag.current = {
       parts: dragParts,
       mode,
