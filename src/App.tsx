@@ -134,7 +134,9 @@ const DEFAULT_PARAMS: RepeatParams = {
 };
 
 // Pencil strokes become radial-repeat layers immediately: draw -> tweak repeat.
-const DRAWN_PARAMS: RepeatParams = { ...DEFAULT_PARAMS };
+// A freshly drawn shape is a SINGLE piece — no repeat. It becomes a radial
+// repeat only in Arrange (bump count) or via "Radialize".
+const DRAWN_PARAMS: RepeatParams = { ...DEFAULT_PARAMS, count: 1 };
 const IMPORT_REPEAT_COUNT = 8;
 const IMPORT_TARGET_MOTIF_SIZE = 150;
 
@@ -210,7 +212,9 @@ export default function App() {
   // index = which copy the overlay is shown on (edits sync to all copies).
   const [partEdit, setPartEdit] = useState<{ layerId: string; partIds: string[]; index: number } | null>(null);
   const [mode, setMode] = useState<EditorMode>("design");
-  const [designView, setDesignView] = useState<DesignView>("context");
+  // Design = edit the single unit; show just the component by default (no repeat).
+  // The repeat is composed in Arrange. Switchable via the Canvas view radio.
+  const [designView, setDesignView] = useState<DesignView>("isolated");
   const [openMenu, setOpenMenu] = useState<"file" | "export" | null>(null);
   const [loop, setLoop] = useState(true);
   const [playTime, setPlayTime] = useState(0);
@@ -1658,9 +1662,13 @@ export default function App() {
                 <button className={`tool-btn${tool === "pencil" ? " is-active" : ""}`} onClick={() => switchTool(tool === "pencil" ? "select" : "pencil")} title="Pencil — draw a path (P)">{Icon.pen()}</button>
                 <button className="tool-btn" onClick={pickColor} title="Eyedropper — pick a color from screen">{Icon.eyedropper({ size: 18 })}</button>
                 <div className="tool-rail-sep" />
-                <label className="tool-swatch" title={primary && tool === "select" ? "Layer fill" : "Default fill for new shapes"} style={{ background: swatchColor }}>
+                <label className="tool-swatch fill" title="Fill" style={{ background: swatchColor }}>
                   <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(swatchColor) ? swatchColor : "#000000"}
                     onChange={(e) => applyColor(e.target.value)} />
+                </label>
+                <label className="tool-swatch border" title="Border" style={{ borderColor: borderColorValue }}>
+                  <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(borderColorValue) ? borderColorValue : "#000000"}
+                    onChange={(e) => applyStrokeColor(e.target.value)} />
                 </label>
               </>
             )}

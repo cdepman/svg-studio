@@ -52,7 +52,7 @@ export function recolorMarkup(html: string, color: string): string {
  *  overriding any existing attr/style value (including "none") and adding the
  *  attribute to elements that lack it. Used to author borders (stroke /
  *  stroke-width) independently of the fill override. */
-function forceProp(html: string, prop: "stroke" | "stroke-width", value: string): string {
+function forceProp(html: string, prop: "fill" | "stroke" | "stroke-width", value: string): string {
   let out = html
     .replace(new RegExp(`${prop}="[^"]*"`, "g"), `${prop}="${value}"`)
     .replace(new RegExp(`${prop}\\s*:\\s*[^;"'}]+`, "g"), `${prop}:${value}`);
@@ -62,6 +62,11 @@ function forceProp(html: string, prop: "stroke" | "stroke-width", value: string)
       new RegExp(`${prop}\\s*[=:]`).test(attrs) ? m : `<${tag}${attrs} ${prop}="${value}"${slash}>`
   );
   return out;
+}
+
+/** Set ONLY the fill on every paintable element (independent of the border). */
+export function setFillColorMarkup(html: string, color: string): string {
+  return forceProp(html, "fill", color);
 }
 
 /** Set the border (stroke) color on every paintable element. */

@@ -13,7 +13,7 @@ describe("App", () => {
     // default mode is Design: a unified Layers panel + the canvas focuses the
     // active motif (no gizmo)
     expect(html).toContain("Layers");
-    expect(html).toContain("design-mode view-context");
+    expect(html).toContain("design-mode view-isolated");
     // default count 12 -> 12 instances, motif def is per-layer
     expect((html.match(/class="instance"/g) ?? []).length).toBe(12);
     expect(html).toContain('id="motif-');

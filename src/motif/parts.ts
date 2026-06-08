@@ -5,7 +5,7 @@
 // motif's rendered `innerHtml` is always derived from the parts (defs preamble +
 // visible, transformed, recolored parts), so every existing consumer (LayerArt,
 // export, thumbnail) is unchanged.
-import { recolorMarkup, setStrokeColorMarkup, setStrokeWidthMarkup } from "./recolor";
+import { setFillColorMarkup, setStrokeColorMarkup, setStrokeWidthMarkup } from "./recolor";
 import { IDENTITY_PART_TRANSFORM, type Box, type Motif, type MotifPart, type PartTransform } from "../types";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -40,13 +40,13 @@ export function partTransformAttr(t: PartTransform, cx: number, cy: number): str
   );
 }
 
-/** A part's painted geometry (no transform wrapper): base markup + fill/border
- *  overrides. The `fill` override paints fill *and* stroke (most imported art is
- *  outline-heavy); an explicit `stroke` / `strokeWidth` override then takes
- *  precedence for the border. Shared by `renderPart` and the live canvas. */
+/** A part's painted geometry (no transform wrapper): base markup with independent
+ *  fill / border (stroke) / border-thickness overrides. Fill and border are fully
+ *  separate so the rail's two swatches don't bleed into each other. Shared by
+ *  `renderPart` and the live canvas. */
 export function paintedPartMarkup(part: MotifPart): string {
   let inner = part.baseMarkup;
-  if (part.fill) inner = recolorMarkup(inner, part.fill);
+  if (part.fill) inner = setFillColorMarkup(inner, part.fill);
   if (part.stroke) inner = setStrokeColorMarkup(inner, part.stroke);
   if (part.strokeWidth != null) inner = setStrokeWidthMarkup(inner, part.strokeWidth);
   return inner;
@@ -168,12 +168,9 @@ export function partStrokeWidth(part: MotifPart): number | null {
  */
 export function recolorMotif(motif: Motif, color: string): Motif {
   if (motif.parts) {
-    return motifWithParts(
-      { ...motif, defs: motif.defs ? recolorMarkup(motif.defs, color) : motif.defs },
-      motif.parts.map((p) => ({ ...p, fill: color }))
-    );
+    return motifWithParts(motif, motif.parts.map((p) => ({ ...p, fill: color })));
   }
-  return { ...motif, innerHtml: recolorMarkup(motif.innerHtml, color) };
+  return { ...motif, innerHtml: setFillColorMarkup(motif.innerHtml, color) };
 }
 
 /** Set the border color on every part (or the whole markup for a part-less motif). */

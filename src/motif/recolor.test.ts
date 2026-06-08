@@ -14,10 +14,10 @@ describe("recolor", () => {
     expect(motifFillColor({ ...drawn, innerHtml: '<path fill="none" stroke="none"/>' })).toBeNull();
   });
 
-  it("recolors fill and the matching stroke (drawn shapes stay consistent)", () => {
+  it("recolors only the fill — the border (stroke) is independent", () => {
     const out = recolorMotif(drawn, "#ff0000").innerHtml;
     expect(out).toContain('fill="#ff0000"');
-    expect(out).toContain('stroke="#ff0000"');
+    expect(out).not.toContain('stroke="#ff0000"'); // fill swatch must not bleed into the border
   });
 
   it("detects a real fill even when a none-fill element comes first (imported art)", () => {

@@ -444,24 +444,27 @@ describe("App layer interactions", () => {
     canvas().querySelectorAll(`[data-layer-id]`)[layerIndex]?.querySelectorAll("use.instance:not(.alt)").length;
   const panZoom = () => Array.from(canvas().children).find((el) => el.tagName.toLowerCase() === "g")!;
 
-  it("Pencil creates a selected radial-repeat layer for each stroke", () => {
+  it("Pencil creates a single-piece layer per stroke (no auto-repeat)", () => {
     // Pencil is a Design tool; assert via the canvas (mode-independent).
     click(titleBtn("Pencil"));
     drawStroke([200, 200], [260, 210], [300, 260], [210, 300]);
     expect(canvasLayerIds()).toHaveLength(2);
     expect(container.textContent).toContain("Drawn Shape 1");
     const drawnG = canvas().querySelector(".layer[data-layer-id]:last-of-type")!;
-    expect(drawnG.querySelectorAll("use.instance:not(.alt)")).toHaveLength(12);
+    // a drawn shape starts as ONE piece, not a radial repeat.
+    expect(drawnG.querySelectorAll("use.instance:not(.alt)")).toHaveLength(1);
     expect(canvas().querySelector(".layer path[fill]")).not.toBeNull();
     drawStroke([400, 400], [460, 410], [500, 460], [410, 500]);
     expect(canvasLayerIds()).toHaveLength(3);
     expect(container.textContent).toContain("Drawn Shape 2");
   });
 
-  it("Pencil strokes are radialized immediately", () => {
+  it("a drawn single piece becomes a repeat only via Radialize", () => {
     click(titleBtn("Pencil"));
     drawStroke([200, 200], [260, 210], [300, 260], [210, 300]);
     click(button("Done"));
+    expect(instancesIn(1)).toBe(1); // single piece
+    click(button("Radialize"));
     expect(instancesIn(1)!).toBeGreaterThan(1);
   });
 
